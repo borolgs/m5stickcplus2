@@ -14,12 +14,13 @@ use embedded_graphics::text::Text;
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
-use esp_hal::gpio::{Level, Output, OutputConfig};
+use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::main;
 use esp_hal::spi::master::{Config, Spi};
 use esp_hal::time::Rate;
 use esp_hal::{clock::CpuClock, delay::Delay};
 use log::info;
+use m5stickcplus2::button::Button;
 use mipidsi::interface::SpiInterface;
 use mipidsi::options::ColorInversion;
 
@@ -45,8 +46,13 @@ fn main() -> ! {
     let mut delay = Delay::new();
 
     let output_config = OutputConfig::default();
+    let button_config = InputConfig::default().with_pull(Pull::Up);
 
     Output::new(peripherals.GPIO4, Level::High, output_config); // power
+
+    let mut button_a = Button::new(Input::new(peripherals.GPIO37, button_config));
+    let mut button_b = Button::new(Input::new(peripherals.GPIO39, button_config));
+    let mut button_c = Button::new(Input::new(peripherals.GPIO35, button_config));
 
     let dc = Output::new(peripherals.GPIO14, Level::Low, output_config);
 
@@ -82,15 +88,69 @@ fn main() -> ! {
     let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
 
     let mut count: u64 = 0;
-    loop {
-        info!("Hello {}", count);
-        count += 1;
+    let mut needs_redraw = true;
 
-        display.clear(Rgb565::BLACK).unwrap();
-        Text::new(&format!("Hello {}", count), Point::new(20, 40), text_style)
+    loop {
+        button_a.update();
+        button_b.update();
+        button_c.update();
+
+        if button_a.just_pressed() {
+            count += 1;
+            info!("Button A pressed");
+        }
+
+        if button_b.just_pressed() {
+            count = 0;
+            info!("Button B pressed");
+        }
+
+        if button_c.just_pressed() {
+            info!("Button C pressed");
+        }
+
+        if button_a.changed() || button_b.changed() || button_c.changed() {
+            needs_redraw = true;
+        }
+
+        let a_pressed = button_a.is_pressed();
+        let b_pressed = button_b.is_pressed();
+        let c_pressed = button_c.is_pressed();
+
+        if needs_redraw {
+            display.clear(Rgb565::BLACK).unwrap();
+
+            Text::new(&format!("Count: {}", count), Point::new(20, 30), text_style)
+                .draw(&mut display)
+                .unwrap();
+
+            Text::new(
+                &format!("A: {}", if a_pressed { "Pressed" } else { "" }),
+                Point::new(20, 60),
+                text_style,
+            )
             .draw(&mut display)
             .unwrap();
 
-        delay.delay_millis(1000);
+            Text::new(
+                &format!("B: {}", if b_pressed { "Pressed" } else { "" }),
+                Point::new(20, 90),
+                text_style,
+            )
+            .draw(&mut display)
+            .unwrap();
+
+            Text::new(
+                &format!("C: {}", if c_pressed { "Pressed" } else { "" }),
+                Point::new(20, 120),
+                text_style,
+            )
+            .draw(&mut display)
+            .unwrap();
+
+            needs_redraw = false;
+        }
+
+        delay.delay_millis(50);
     }
 }
