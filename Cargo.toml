@@ -29,10 +29,18 @@ embedded-hal-bus = "0.3.0"
 
 mipidsi = "0.9.0"
 
+ratatui = { version = "0.30.0-beta.0", default-features = false }
+# https://github.com/j-g00da/mousefood/issues/115
+# > The latest version on crates.io - v2.1 uses std, but the version on main branch is already no_std
+mousefood = { git = "https://github.com/j-g00da/mousefood", rev = "c8d5e4a5af50bdab623f13656494c17e92dbf688" }
+
 [profile.dev]
 # Rust debug is too slow.
 # For debug builds always builds with some optimization
-opt-level = "s"
+# opt-level = "s"
+
+# https://github.com/j-g00da/mousefood?tab=readme-ov-file#performance-and-hardware-support
+opt-level = 3
 
 [profile.release]
 codegen-units    = 1     # LLVM can perform better optimizations using a single thread
