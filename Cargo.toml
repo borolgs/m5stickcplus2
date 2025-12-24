@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["stick", "sim"]
+members = ["stick", "sim", "app"]
 
 [workspace.package]
 edition = "2024"

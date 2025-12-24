@@ -11,3 +11,7 @@ path = "./src/main.rs"
 [dependencies]
 embedded-graphics = "0.8.1"
 embedded-graphics-simulator = "0.8.0"
+
+embassy-executor = { version = "0.9.1", features = [] }
+embassy-time     = "0.5.0"
+embassy-sync = { version = "0.7.2" }
