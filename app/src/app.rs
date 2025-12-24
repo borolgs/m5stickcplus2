@@ -1,5 +1,8 @@
+#[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
-use esp_hal::time::Instant;
+
+#[cfg(feature = "std")]
+use std::{string::String, vec::Vec};
 use ratatui::{
     Frame, Terminal,
     buffer::Buffer,
@@ -20,7 +23,7 @@ pub struct App {
     receiver: Receiver,
     exit: bool,
     pub layout: AppLayout,
-    exit_start: Option<Instant>,
+    // exit_start: Option<Instant>,
     selected_tab: SelectedTab,
     battery_level: i32,
 }
@@ -32,7 +35,7 @@ impl App {
             receiver,
             exit: false,
             layout: AppLayout::new(Rect::default()),
-            exit_start: None,
+            // exit_start: None,
             selected_tab: SelectedTab::Tab1,
             battery_level,
         }
@@ -78,18 +81,20 @@ impl App {
         let titles = SelectedTab::titles();
         let selected_tab_index = self.selected_tab as usize;
 
-        let bg_color = self
-            .exit_start
-            .and_then(|start| {
-                let elapsed = start.elapsed();
-                let held_ms = elapsed.as_millis();
-                if held_ms < 300 {
-                    return None;
-                }
-
-                Some(Color::Rgb(ms_to_red(held_ms), 10, 10))
-            })
-            .unwrap_or(Color::Rgb(10, 10, 10));
+        let bg_color = Color::Rgb(10, 10, 10);
+        // TODO: re-enable exit timer
+        // self
+        //     .exit_start
+        //     .and_then(|start| {
+        //         let elapsed = start.elapsed();
+        //         let held_ms = elapsed.as_millis();
+        //         if held_ms < 300 {
+        //             return None;
+        //         }
+        //
+        //         Some(Color::Rgb(ms_to_red(held_ms), 10, 10))
+        //     })
+        //     .unwrap_or(Color::Rgb(10, 10, 10));
 
         Tabs::new(titles)
             .highlight_style(Style::new().fg(Color::White))
@@ -106,6 +111,7 @@ impl App {
     }
 
     fn draw_footer(&self, area: Rect, buf: &mut Buffer) {
+        #[cfg(feature = "esp-alloc")]
         let heap = {
             let free = esp_alloc::HEAP.free();
             let used = esp_alloc::HEAP.used();
@@ -119,15 +125,19 @@ impl App {
             )
         };
 
-        let mut info = format!(" {}", heap);
+        #[cfg(not(feature = "esp-alloc"))]
+        let heap = format!(" b:{}%", self.battery_level);
 
-        if let Some(start) = self.exit_start {
-            let elapsed = start.elapsed();
-            let held_ms = elapsed.as_millis();
-            if held_ms > 300 {
-                info = format!(" exit:{}ms", held_ms);
-            }
-        }
+        let info = format!(" {}", heap);
+
+        // TODO: re-enable exit timer
+        // if let Some(start) = self.exit_start {
+        //     let elapsed = start.elapsed();
+        //     let held_ms = elapsed.as_millis();
+        //     if held_ms > 300 {
+        //         info = format!(" exit:{}ms", held_ms);
+        //     }
+        // }
 
         buf.set_string(
             0,

@@ -1,7 +1,7 @@
 use esp_hal::gpio::Input;
 use log::debug;
 
-use crate::events::{self, Event, Sender};
+use app::events::{self, Event, Sender};
 
 pub struct Buttons {
     sender: Sender,

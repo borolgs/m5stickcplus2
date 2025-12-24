@@ -9,6 +9,8 @@ name = "stick"
 path = "./src/bin/main.rs"
 
 [dependencies]
+app = { path = "../app" }
+
 log = "0.4.27"
 
 esp-hal = { version = "~1.0", features = ["esp32", "log-04", "unstable"] }
@@ -39,4 +41,3 @@ ratatui = { version = "0.30.0-beta.0", default-features = false }
 # > The latest version on crates.io - v2.1 uses std, but the version on main branch is already no_std
 mousefood = { git = "https://github.com/j-g00da/mousefood", rev = "c8d5e4a5af50bdab623f13656494c17e92dbf688" }
 nb = "1.1.0"
-

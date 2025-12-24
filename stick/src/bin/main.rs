@@ -8,6 +8,7 @@
 #![deny(clippy::large_stack_frames)]
 
 use alloc::boxed::Box;
+use app::{App, events};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
@@ -19,14 +20,12 @@ use esp_hal::spi::master::{Config, Spi};
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::{clock::CpuClock, delay::Delay};
-use stick::app::App;
-use stick::button::Buttons;
-use stick::events;
 use mipidsi::interface::SpiInterface;
 use mipidsi::options::{ColorInversion, Orientation, Rotation};
 use mousefood::EmbeddedBackend;
 use mousefood::EmbeddedBackendConfig;
 use ratatui::Terminal;
+use stick::button::Buttons;
 
 extern crate alloc;
 
