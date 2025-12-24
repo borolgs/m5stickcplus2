@@ -8,16 +8,20 @@
 #![deny(clippy::large_stack_frames)]
 
 use alloc::boxed::Box;
+use embassy_executor::Spawner;
+use embassy_time::{Duration, Timer};
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
+use esp_hal::analog::adc::{Adc, AdcConfig, Attenuation};
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
-use esp_hal::main;
 use esp_hal::spi::master::{Config, Spi};
 use esp_hal::time::Rate;
+use esp_hal::timer::timg::TimerGroup;
 use esp_hal::{clock::CpuClock, delay::Delay};
 use m5stickcplus2::app::App;
 use m5stickcplus2::button::Buttons;
+use m5stickcplus2::events;
 use mipidsi::interface::SpiInterface;
 use mipidsi::options::{ColorInversion, Orientation, Rotation};
 use mousefood::EmbeddedBackend;
@@ -28,18 +32,35 @@ extern crate alloc;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
+#[embassy_executor::task]
+async fn buttons_task(mut button: Buttons) {
+    loop {
+        button.update().await;
+        Timer::after(Duration::from_millis(50)).await;
+    }
+}
+
 #[allow(
     clippy::large_stack_frames,
     reason = "it's not unusual to allocate larger buffers etc. in main"
 )]
-#[main]
-fn main() -> ! {
+#[esp_rtos::main]
+async fn main(spawner: Spawner) -> ! {
     esp_println::logger::init_logger_from_env();
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    esp_alloc::heap_allocator!(size: 180000);
+    let timg0 = TimerGroup::new(peripherals.TIMG0);
+    esp_rtos::start(timg0.timer0);
+
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 98768);
+    esp_alloc::heap_allocator!(size: 80000);
+
+    // battery
+    let mut adc_config = AdcConfig::new();
+    let mut battery_pin = adc_config.enable_pin(peripherals.GPIO38, Attenuation::_11dB);
+    let mut adc = Adc::new(peripherals.ADC1, adc_config);
 
     let output_config = OutputConfig::default();
     let button_config = InputConfig::default().with_pull(Pull::Up);
@@ -91,16 +112,38 @@ fn main() -> ! {
 
     let mut terminal = Terminal::new(backend).unwrap();
 
+    let channel = Box::leak(Box::new(events::channel()));
+
+    let sender = channel.publisher().unwrap();
+
     let buttons = Buttons::new(
+        sender,
         Input::new(peripherals.GPIO37, button_config),
         Input::new(peripherals.GPIO39, button_config),
         Input::new(peripherals.GPIO35, button_config),
     );
-    let mut app = App::new(buttons);
+
+    let adc_value: u16 = nb::block!(adc.read_oneshot(&mut battery_pin)).unwrap();
+    let battery_mv = adc_value * 2;
+    let battery_percent = ((battery_mv as i32 - 3300) * 100 / (4150 - 3350)).clamp(0, 100);
+    log::info!(
+        "Battery: {} mV ({:.2}V) - {}%",
+        battery_mv,
+        battery_mv as f32 / 1000.0,
+        battery_percent
+    );
+
+    let mut app = App::new(
+        channel.publisher().unwrap(),
+        channel.subscriber().unwrap(),
+        battery_percent,
+    );
 
     let _backlight = Output::new(peripherals.GPIO27, Level::High, output_config);
 
-    app.run(&mut terminal).unwrap();
+    spawner.spawn(buttons_task(buttons)).unwrap();
+
+    app.run(&mut terminal).await.unwrap();
 
     loop {}
 }

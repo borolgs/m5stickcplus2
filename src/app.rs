@@ -1,6 +1,5 @@
 use alloc::{string::String, vec::Vec};
 use esp_hal::time::Instant;
-use log::info;
 use ratatui::{
     Frame, Terminal,
     buffer::Buffer,
@@ -10,34 +9,44 @@ use ratatui::{
     widgets::{Block, Padding, Paragraph, Tabs},
 };
 
-use crate::{button::Buttons, layout::AppLayout};
+use crate::{
+    events::{self, Event, Receiver, Sender},
+    layout::AppLayout,
+};
 
 pub struct App {
+    #[allow(dead_code)]
+    sender: Sender,
+    receiver: Receiver,
     exit: bool,
     pub layout: AppLayout,
-    buttons: Buttons,
     exit_start: Option<Instant>,
     selected_tab: SelectedTab,
+    battery_level: i32,
 }
 
 impl App {
-    pub fn new(buttons: Buttons) -> Self {
+    pub fn new(sender: Sender, receiver: Receiver, battery_level: i32) -> Self {
         Self {
+            sender,
+            receiver,
             exit: false,
-            buttons: buttons,
             layout: AppLayout::new(Rect::default()),
             exit_start: None,
             selected_tab: SelectedTab::Tab1,
+            battery_level,
         }
     }
 
-    pub fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<(), B::Error> {
+    pub async fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<(), B::Error> {
         self.layout = AppLayout::new(terminal.get_frame().area());
 
         while !self.exit {
             terminal.draw(|frame| self.draw(frame))?;
-            self.handle_events::<B>()?;
+            let msg = self.receiver.next_message_pure().await;
+            self.handle_events(msg);
         }
+
         Ok(())
     }
 
@@ -102,7 +111,12 @@ impl App {
             let used = esp_alloc::HEAP.used();
             let total = free + used;
 
-            format!("h:{}/{}", used / 1024, total / 1024)
+            format!(
+                " b:{}% | h:{}/{}",
+                self.battery_level,
+                used / 1024,
+                total / 1024
+            )
         };
 
         let mut info = format!(" {}", heap);
@@ -123,27 +137,15 @@ impl App {
         );
     }
 
-    fn handle_events<B: Backend>(&mut self) -> Result<(), B::Error> {
-        self.buttons.update();
-
-        if self.buttons.a.just_pressed() {
-            info!("Button A pressed");
+    fn handle_events(&mut self, event: Event) {
+        match event {
+            Event::ButtonUp(events::Button::A) => {}
+            Event::ButtonUp(events::Button::B) => {}
+            Event::ButtonUp(events::Button::C) => {
+                self.next_tab();
+            }
+            _ => {}
         }
-
-        if self.buttons.b.just_pressed() {
-            info!("Button B pressed");
-        }
-
-        if self.buttons.c.just_pressed() {
-            self.exit_start = Some(Instant::now());
-            self.next_tab();
-            info!("Button C pressed");
-        }
-        if !self.buttons.c.is_pressed() {
-            self.exit_start = None
-        }
-
-        Ok(())
     }
 }
 
