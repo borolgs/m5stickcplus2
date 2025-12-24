@@ -1,0 +1,13 @@
+[package]
+name = "sim"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "sim"
+path = "./src/main.rs"
+
+[dependencies]
+embedded-graphics = "0.8.1"
+embedded-graphics-simulator = "0.8.0"
