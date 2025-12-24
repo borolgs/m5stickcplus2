@@ -9,13 +9,11 @@ name = "m5stickcplus2"
 path = "./src/bin/main.rs"
 
 [dependencies]
+log = "0.4.27"
+
 esp-hal = { version = "~1.0", features = ["esp32", "log-04", "unstable"] }
-
-
+esp-radio = { version = "0.17.0", features = ["esp32", "log-04", "unstable"] }
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["esp32", "log-04"] }
-log                    = "0.4.27"
-
-critical-section = "1.2.0"
 esp-alloc = "0.9.0"
 esp-backtrace = { version = "0.18.1", features = [
   "esp32",
@@ -23,6 +21,13 @@ esp-backtrace = { version = "0.18.1", features = [
   "println",
 ] }
 esp-println = { version = "0.16.1", features = ["esp32", "log-04"] }
+
+esp-rtos = { version = "0.2.0", features = ["embassy", "esp-alloc", "esp32"] }
+embassy-executor = { version = "0.9.1", features = [] }
+embassy-time     = "0.5.0"
+embassy-sync = { version = "0.7.2" }
+
+critical-section = "1.2.0"
 
 embedded-graphics = "0.8.1"
 embedded-hal-bus = "0.3.0"
@@ -33,6 +38,7 @@ ratatui = { version = "0.30.0-beta.0", default-features = false }
 # https://github.com/j-g00da/mousefood/issues/115
 # > The latest version on crates.io - v2.1 uses std, but the version on main branch is already no_std
 mousefood = { git = "https://github.com/j-g00da/mousefood", rev = "c8d5e4a5af50bdab623f13656494c17e92dbf688" }
+nb = "1.1.0"
 
 [profile.dev]
 # Rust debug is too slow.

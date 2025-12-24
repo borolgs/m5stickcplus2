@@ -5,4 +5,5 @@ extern crate alloc;
 
 pub mod app;
 pub mod button;
+pub mod events;
 pub mod layout;
