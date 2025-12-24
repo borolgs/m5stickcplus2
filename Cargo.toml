@@ -1,58 +1,22 @@
-[package]
-edition      = "2024"
-name         = "m5stickcplus2"
+[workspace]
+resolver = "2"
+members = ["stick", "sim"]
+
+[workspace.package]
+edition = "2024"
 rust-version = "1.88"
-version      = "0.1.0"
-
-[[bin]]
-name = "m5stickcplus2"
-path = "./src/bin/main.rs"
-
-[dependencies]
-log = "0.4.27"
-
-esp-hal = { version = "~1.0", features = ["esp32", "log-04", "unstable"] }
-esp-radio = { version = "0.17.0", features = ["esp32", "log-04", "unstable"] }
-esp-bootloader-esp-idf = { version = "0.4.0", features = ["esp32", "log-04"] }
-esp-alloc = "0.9.0"
-esp-backtrace = { version = "0.18.1", features = [
-  "esp32",
-  "panic-handler",
-  "println",
-] }
-esp-println = { version = "0.16.1", features = ["esp32", "log-04"] }
-
-esp-rtos = { version = "0.2.0", features = ["embassy", "esp-alloc", "esp32"] }
-embassy-executor = { version = "0.9.1", features = [] }
-embassy-time     = "0.5.0"
-embassy-sync = { version = "0.7.2" }
-
-critical-section = "1.2.0"
-
-embedded-graphics = "0.8.1"
-embedded-hal-bus = "0.3.0"
-
-mipidsi = "0.9.0"
-
-ratatui = { version = "0.30.0-beta.0", default-features = false }
-# https://github.com/j-g00da/mousefood/issues/115
-# > The latest version on crates.io - v2.1 uses std, but the version on main branch is already no_std
-mousefood = { git = "https://github.com/j-g00da/mousefood", rev = "c8d5e4a5af50bdab623f13656494c17e92dbf688" }
-nb = "1.1.0"
+version = "0.1.0"
 
 [profile.dev]
 # Rust debug is too slow.
 # For debug builds always builds with some optimization
-# opt-level = "s"
-
-# https://github.com/j-g00da/mousefood?tab=readme-ov-file#performance-and-hardware-support
 opt-level = 3
 
 [profile.release]
-codegen-units    = 1     # LLVM can perform better optimizations using a single thread
-debug            = 2
+codegen-units = 1
+debug = 2
 debug-assertions = false
-incremental      = false
-lto              = 'fat'
-opt-level        = 's'
-overflow-checks  = false
+incremental = false
+lto = 'fat'
+opt-level = 's'
+overflow-checks = false
