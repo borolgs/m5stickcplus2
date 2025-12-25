@@ -7,5 +7,6 @@ extern crate alloc;
 pub mod app;
 pub mod events;
 pub mod layout;
+pub mod remote;
 
 pub use app::App;

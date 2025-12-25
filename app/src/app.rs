@@ -36,7 +36,7 @@ impl App {
             exit: false,
             layout: AppLayout::new(Rect::default()),
             // exit_start: None,
-            selected_tab: SelectedTab::Tab1,
+            selected_tab: SelectedTab::Main,
             battery_level: 0, // TODO
         }
     }
@@ -57,7 +57,7 @@ impl App {
                 )
                 .await
                 {
-                    Ok(msg) => self.handle_events(msg),
+                    Ok(msg) => self.handle_events(msg).await,
                     Err(_) => {}
                 }
             }
@@ -65,7 +65,7 @@ impl App {
             #[cfg(not(feature = "std"))]
             {
                 let msg = self.receiver.next_message_pure().await;
-                self.handle_events(msg);
+                self.handle_events(msg).await;
             }
         }
 
@@ -87,11 +87,14 @@ impl App {
 
         self.draw_tabs(header, buf);
 
-        let main_block = Block::new()
-            .padding(Padding::left(1))
-            .padding(Padding::top(1));
-
-        Paragraph::new("hello").block(main_block).render(main, buf);
+        match self.selected_tab {
+            SelectedTab::Main => {}
+            SelectedTab::Telegram => {}
+            SelectedTab::Remote => {
+                self.draw_remote(main, buf);
+            }
+            SelectedTab::Info => {}
+        }
 
         self.draw_footer(footer, buf);
     }
@@ -100,7 +103,7 @@ impl App {
         let titles = SelectedTab::titles();
         let selected_tab_index = self.selected_tab as usize;
 
-        let bg_color = Color::Rgb(10, 10, 10);
+        let bg_color = Color::Rgb(50, 50, 50);
         // TODO: re-enable exit timer
         // self
         //     .exit_start
@@ -126,6 +129,13 @@ impl App {
                     .fg(Color::Black)
                     .padding(Padding::left(1)),
             )
+            .render(area, buf);
+    }
+
+    fn draw_remote(&self, area: Rect, buf: &mut Buffer) {
+        Paragraph::new("On/Off")
+            .alignment(ratatui::layout::HorizontalAlignment::Center)
+            .block(Block::bordered())
             .render(area, buf);
     }
 
@@ -166,9 +176,16 @@ impl App {
         );
     }
 
-    fn handle_events(&mut self, event: Event) {
+    async fn handle_events(&mut self, event: Event) {
         match event {
-            Event::ButtonUp(events::Button::A) => {}
+            Event::ButtonUp(events::Button::A) => match self.selected_tab {
+                SelectedTab::Remote => {
+                    self.sender
+                        .publish(Event::Remote(events::Remote::OnOff))
+                        .await
+                }
+                _ => {}
+            },
             Event::ButtonUp(events::Button::B) => {}
             Event::ButtonUp(events::Button::C) => {
                 self.next_tab();
@@ -180,38 +197,38 @@ impl App {
 
 #[derive(Clone, Copy)]
 pub enum SelectedTab {
-    Tab1,
-    Tab2,
-    Tab3,
-    Tab4,
+    Main,
+    Telegram,
+    Remote,
+    Info,
 }
 
 impl SelectedTab {
     pub fn titles() -> Vec<String> {
         let mut titles = Vec::with_capacity(4);
-        titles.push(Self::Tab1.title());
-        titles.push(Self::Tab2.title());
-        titles.push(Self::Tab3.title());
-        titles.push(Self::Tab4.title());
+        titles.push(Self::Main.title());
+        titles.push(Self::Telegram.title());
+        titles.push(Self::Remote.title());
+        titles.push(Self::Info.title());
         titles
     }
 
     pub fn title(self) -> String {
         match self {
-            SelectedTab::Tab1 => "tab 1",
-            SelectedTab::Tab2 => "tab 2",
-            SelectedTab::Tab3 => "tab 3",
-            SelectedTab::Tab4 => "tab 4",
+            SelectedTab::Main => "main",
+            SelectedTab::Telegram => "tg",
+            SelectedTab::Remote => "tv",
+            SelectedTab::Info => "info",
         }
         .into()
     }
 
     pub fn next(self) -> Self {
         match self {
-            SelectedTab::Tab1 => SelectedTab::Tab2,
-            SelectedTab::Tab2 => SelectedTab::Tab3,
-            SelectedTab::Tab3 => SelectedTab::Tab4,
-            SelectedTab::Tab4 => SelectedTab::Tab1,
+            SelectedTab::Main => SelectedTab::Telegram,
+            SelectedTab::Telegram => SelectedTab::Remote,
+            SelectedTab::Remote => SelectedTab::Info,
+            SelectedTab::Info => SelectedTab::Main,
         }
     }
 }

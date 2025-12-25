@@ -1,15 +1,26 @@
-use app::{App, events};
+use app::{
+    App,
+    events::{self, Receiver},
+};
 use embassy_executor::Spawner;
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window, sdl2,
 };
-use log::debug;
+use log::{debug, info};
 use mousefood::prelude::*;
 use ratatui::Terminal;
 
+#[embassy_executor::task]
+async fn event_handler(mut receiver: Receiver) {
+    loop {
+        let event = receiver.next_message_pure().await;
+        info!("Message from app: {:?}", event);
+    }
+}
+
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
         .format_timestamp_nanos()
@@ -66,6 +77,10 @@ async fn main(_spawner: Spawner) {
         EmbeddedBackend::new(&mut display, backend_config);
 
     let mut terminal = Terminal::new(backend).unwrap();
+
+    spawner
+        .spawn(event_handler(channel.subscriber().unwrap()))
+        .unwrap();
 
     App::new(channel.publisher().unwrap(), channel.subscriber().unwrap())
         .run(&mut terminal)

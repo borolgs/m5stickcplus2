@@ -8,6 +8,7 @@
 #![deny(clippy::large_stack_frames)]
 
 use alloc::boxed::Box;
+use app::events::Receiver;
 use app::{App, events};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
@@ -30,6 +31,15 @@ use stick::button::Buttons;
 extern crate alloc;
 
 esp_bootloader_esp_idf::esp_app_desc!();
+
+#[embassy_executor::task]
+async fn event_handler(mut receiver: Receiver) {
+    loop {
+        let event = receiver.next_message_pure().await;
+        log::info!("Message from app: {:?}", event);
+        // TODO: implement sending On/Off IR signal to LG TV
+    }
+}
 
 #[embassy_executor::task]
 async fn buttons_task(mut button: Buttons) {
@@ -137,6 +147,9 @@ async fn main(spawner: Spawner) -> ! {
     let _backlight = Output::new(peripherals.GPIO27, Level::High, output_config);
 
     spawner.spawn(buttons_task(buttons)).unwrap();
+    spawner
+        .spawn(event_handler(channel.subscriber().unwrap()))
+        .unwrap();
 
     app.run(&mut terminal).await.unwrap();
 
