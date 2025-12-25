@@ -132,11 +132,7 @@ async fn main(spawner: Spawner) -> ! {
         battery_percent
     );
 
-    let mut app = App::new(
-        channel.publisher().unwrap(),
-        channel.subscriber().unwrap(),
-        battery_percent,
-    );
+    let mut app = App::new(channel.publisher().unwrap(), channel.subscriber().unwrap());
 
     let _backlight = Output::new(peripherals.GPIO27, Level::High, output_config);
 

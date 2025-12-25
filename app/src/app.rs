@@ -1,8 +1,6 @@
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
 
-#[cfg(feature = "std")]
-use std::{string::String, vec::Vec};
 use ratatui::{
     Frame, Terminal,
     buffer::Buffer,
@@ -11,6 +9,8 @@ use ratatui::{
     style::{Color, Style, Stylize},
     widgets::{Block, Padding, Paragraph, Tabs},
 };
+#[cfg(feature = "std")]
+use std::{string::String, vec::Vec};
 
 use crate::{
     events::{self, Event, Receiver, Sender},
@@ -29,7 +29,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(sender: Sender, receiver: Receiver, battery_level: i32) -> Self {
+    pub fn new(sender: Sender, receiver: Receiver) -> Self {
         Self {
             sender,
             receiver,
@@ -37,7 +37,7 @@ impl App {
             layout: AppLayout::new(Rect::default()),
             // exit_start: None,
             selected_tab: SelectedTab::Tab1,
-            battery_level,
+            battery_level: 0, // TODO
         }
     }
 
