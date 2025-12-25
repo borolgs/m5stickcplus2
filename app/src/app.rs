@@ -46,8 +46,27 @@ impl App {
 
         while !self.exit {
             terminal.draw(|frame| self.draw(frame))?;
-            let msg = self.receiver.next_message_pure().await;
-            self.handle_events(msg);
+
+            // simulator dev: timeout prevents deadlock (SDL events polled in flush_callback)
+            #[cfg(feature = "std")]
+            {
+                use embassy_time::Duration;
+                match embassy_time::with_timeout(
+                    Duration::from_millis(16),
+                    self.receiver.next_message_pure(),
+                )
+                .await
+                {
+                    Ok(msg) => self.handle_events(msg),
+                    Err(_) => {}
+                }
+            }
+
+            #[cfg(not(feature = "std"))]
+            {
+                let msg = self.receiver.next_message_pure().await;
+                self.handle_events(msg);
+            }
         }
 
         Ok(())
