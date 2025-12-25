@@ -3,6 +3,7 @@ use embassy_sync::{
     pubsub::{PubSubChannel, Publisher, Subscriber},
 };
 
+pub type Channel = PubSubChannel<NoopRawMutex, Event, 4, 4, 4>;
 pub type Sender = Publisher<'static, NoopRawMutex, Event, 4, 4, 4>;
 pub type Receiver = Subscriber<'static, NoopRawMutex, Event, 4, 4, 4>;
 
@@ -19,6 +20,6 @@ pub enum Button {
     C,
 }
 
-pub fn channel() -> PubSubChannel<NoopRawMutex, Event, 4, 4, 4> {
-    PubSubChannel::<NoopRawMutex, Event, 4, 4, 4>::new()
+pub fn channel() -> Channel {
+    Channel::new()
 }
