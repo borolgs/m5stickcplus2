@@ -17,6 +17,9 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
 use esp_hal::analog::adc::{Adc, AdcConfig, Attenuation};
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+use esp_hal::rmt::{
+    PulseCode, Rmt, RxChannelConfig, RxChannelCreator, TxChannelConfig, TxChannelCreator,
+};
 use esp_hal::spi::master::{Config, Spi};
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
@@ -27,17 +30,55 @@ use mousefood::EmbeddedBackend;
 use mousefood::EmbeddedBackendConfig;
 use ratatui::Terminal;
 use stick::button::Buttons;
+use stick::ir::{decode_nec_command, encode_nec_command};
 
 extern crate alloc;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
 #[embassy_executor::task]
-async fn event_handler(mut receiver: Receiver) {
+async fn ir_tx_task(
+    mut receiver: Receiver,
+    mut ir_tx_channel: esp_hal::rmt::Channel<'static, esp_hal::Async, esp_hal::rmt::Tx>,
+) {
+    log::info!("📡 IR Transmitter ready on GPIO19");
+
     loop {
-        let event = receiver.next_message_pure().await;
-        log::info!("Message from app: {:?}", event);
-        // TODO: implement sending On/Off IR signal to LG TV
+        let msg = receiver.next_message_pure().await;
+
+        if let events::Event::Remote(events::Remote::OnOff) = msg {
+            log::info!(">>> Sending IR: Address=0x04, Command=0x08");
+
+            let pulses = encode_nec_command(0x04, 0x08);
+
+            match ir_tx_channel.transmit(&pulses).await {
+                Ok(_) => log::info!("IR signal sent successfully"),
+                Err(e) => log::error!("IR transmit failed: {:?}", e),
+            }
+        }
+    }
+}
+
+#[embassy_executor::task]
+async fn ir_rx_task(
+    mut ir_rx_channel: esp_hal::rmt::Channel<'static, esp_hal::Async, esp_hal::rmt::Rx>,
+) {
+    log::info!("IR Receiver started");
+
+    let mut ir_buffer: [PulseCode; 48] = [PulseCode::default(); 48];
+
+    loop {
+        match ir_rx_channel.receive(&mut ir_buffer).await {
+            Ok(pulses) => {
+                if let Some((addr, cmd)) = decode_nec_command(&ir_buffer[..pulses.min(64)]) {
+                    log::info!("IR RX: Address=0x{:02X}, Command=0x{:02X}", addr, cmd);
+                }
+            }
+            Err(e) => {
+                log::warn!("RX error: {:?}, retrying in 1s...", e);
+                Timer::after(Duration::from_millis(1000)).await;
+            }
+        }
     }
 }
 
@@ -102,7 +143,7 @@ async fn main(spawner: Spawner) -> ! {
             .display_size(135, 240)
             .display_offset(52, 40)
             .invert_colors(ColorInversion::Inverted)
-            .orientation(Orientation::new().rotate(Rotation::Deg90))
+            .orientation(Orientation::new().rotate(Rotation::Deg270))
             .reset_pin(rst)
             .init(&mut delay)
             .unwrap();
@@ -147,9 +188,44 @@ async fn main(spawner: Spawner) -> ! {
     let _backlight = Output::new(peripherals.GPIO27, Level::High, output_config);
 
     spawner.spawn(buttons_task(buttons)).unwrap();
-    spawner
-        .spawn(event_handler(channel.subscriber().unwrap()))
+
+    let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80))
+        .unwrap()
+        .into_async();
+
+    let ir_tx_channel = rmt
+        .channel0
+        .configure_tx(
+            peripherals.GPIO19,
+            TxChannelConfig::default()
+                .with_clk_divider(80)
+                .with_carrier_modulation(true)
+                .with_carrier_high(1053)
+                .with_carrier_low(1053)
+                .with_carrier_level(Level::High)
+                .with_idle_output_level(Level::Low)
+                .with_idle_output(true),
+        )
         .unwrap();
+
+    let ir_rx_channel = rmt
+        .channel1
+        .configure_rx(
+            peripherals.GPIO33,
+            RxChannelConfig::default()
+                .with_clk_divider(80)
+                .with_filter_threshold(50)
+                .with_idle_threshold(30000)
+                .with_carrier_modulation(false)
+                .with_carrier_high(1)
+                .with_carrier_low(1),
+        )
+        .unwrap();
+
+    spawner
+        .spawn(ir_tx_task(channel.subscriber().unwrap(), ir_tx_channel))
+        .unwrap();
+    spawner.spawn(ir_rx_task(ir_rx_channel)).unwrap();
 
     app.run(&mut terminal).await.unwrap();
 

@@ -1860,6 +1860,7 @@ dependencies = [
  "app",
  "critical-section",
  "embassy-executor",
+ "embassy-futures",
  "embassy-sync 0.7.2",
  "embassy-time",
  "embedded-graphics",
