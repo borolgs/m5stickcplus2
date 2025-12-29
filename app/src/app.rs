@@ -1,20 +1,25 @@
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
 
+use embassy_time::Instant;
 use ratatui::{
     Frame, Terminal,
     buffer::Buffer,
-    layout::Rect,
-    prelude::{Backend, Widget},
+    layout::{Constraint, Layout, Margin, Rect},
+    prelude::{Backend, StatefulWidget, Widget},
     style::{Color, Style, Stylize},
     widgets::{Block, Padding, Paragraph, Tabs},
 };
 #[cfg(feature = "std")]
 use std::{string::String, vec::Vec};
 
+use strum::IntoEnumIterator;
+
 use crate::{
+    Stats,
     events::{self, EVENTS, Event, Receiver, Sender},
     layout::AppLayout,
+    remote::{TVRemote, TVState},
 };
 
 pub struct App {
@@ -23,9 +28,11 @@ pub struct App {
     receiver: Receiver,
     exit: bool,
     pub layout: AppLayout,
-    // exit_start: Option<Instant>,
+    c_start: Option<Instant>,
     selected_tab: SelectedTab,
-    battery_level: u8,
+    tab_touched: bool,
+    stats: events::Stats,
+    tv: TVState,
 }
 
 impl App {
@@ -37,9 +44,13 @@ impl App {
             receiver,
             exit: false,
             layout: AppLayout::new(Rect::default()),
-            // exit_start: None,
-            selected_tab: SelectedTab::Main,
-            battery_level: 0,
+            c_start: None,
+            selected_tab: SelectedTab::Remote,
+            tab_touched: false,
+            tv: TVState {
+                current_btn: events::Remote::OnOff,
+            },
+            stats: Stats::default(),
         }
     }
 
@@ -74,8 +85,30 @@ impl App {
         Ok(())
     }
 
-    pub fn next_tab(&mut self) {
+    fn next_tab(&mut self) {
+        self.tv.current_btn = events::Remote::OnOff;
         self.selected_tab = self.selected_tab.next();
+        self.tab_touched = false;
+    }
+
+    #[allow(unused)]
+    fn prev_tab(&mut self) {
+        self.selected_tab = self.selected_tab.prev();
+        self.tab_touched = false;
+    }
+
+    fn touch_tab(&mut self) {
+        self.tab_touched = true;
+    }
+
+    fn c_held_time(&self) -> u64 {
+        if let Some(start) = self.c_start {
+            let elapsed = start.elapsed();
+            let held_ms = elapsed.as_millis();
+            return held_ms;
+        }
+
+        0
     }
 
     fn draw(&self, frame: &mut Frame) {
@@ -90,12 +123,8 @@ impl App {
         self.draw_tabs(header, buf);
 
         match self.selected_tab {
-            SelectedTab::Main => {}
-            SelectedTab::Telegram => {}
-            SelectedTab::Remote => {
-                self.draw_remote(main, buf);
-            }
-            SelectedTab::Info => {}
+            SelectedTab::Remote => self.draw_remote(main, buf),
+            SelectedTab::Info => self.draw_info(main, buf),
         }
 
         self.draw_footer(footer, buf);
@@ -135,40 +164,39 @@ impl App {
     }
 
     fn draw_remote(&self, area: Rect, buf: &mut Buffer) {
-        Paragraph::new("On/Off")
-            .alignment(ratatui::layout::HorizontalAlignment::Center)
-            .block(Block::bordered())
-            .render(area, buf);
+        TVRemote::new().render(area, buf, &mut self.tv.clone());
+    }
+
+    fn draw_info(&self, area: Rect, buf: &mut Buffer) {
+        let horizontal = Layout::horizontal([Constraint::Max(10), Constraint::Fill(1)]);
+        let vertical = Layout::vertical((0..3).map(|_| Constraint::Length(1)));
+
+        let rows = vertical.split(area.inner(Margin::new(1, 1)));
+        let cells = rows
+            .iter()
+            .flat_map(|&row| horizontal.split(row).to_vec())
+            .collect::<Vec<_>>();
+
+        let info_style = Style::new().fg(Color::DarkGray);
+
+        Paragraph::new("heap")
+            .style(info_style)
+            .render(cells[0], buf);
+        Paragraph::new(format!(
+            "{}/{}",
+            self.stats.heap_used / 1024,
+            (self.stats.heap_used + self.stats.heap_free) / 1024
+        ))
+        .render(cells[1], buf);
+
+        Paragraph::new("battery")
+            .style(info_style)
+            .render(cells[2], buf);
+        Paragraph::new(format!("{}%", self.stats.battery_level)).render(cells[3], buf);
     }
 
     fn draw_footer(&self, area: Rect, buf: &mut Buffer) {
-        #[cfg(feature = "esp-alloc")]
-        let heap = {
-            let free = esp_alloc::HEAP.free();
-            let used = esp_alloc::HEAP.used();
-            let total = free + used;
-
-            format!(
-                " b:{}% | h:{}/{}",
-                self.battery_level,
-                used / 1024,
-                total / 1024
-            )
-        };
-
-        #[cfg(not(feature = "esp-alloc"))]
-        let heap = format!(" b:{}%", self.battery_level);
-
-        let info = format!(" {}", heap);
-
-        // TODO: re-enable exit timer
-        // if let Some(start) = self.exit_start {
-        //     let elapsed = start.elapsed();
-        //     let held_ms = elapsed.as_millis();
-        //     if held_ms > 300 {
-        //         info = format!(" exit:{}ms", held_ms);
-        //     }
-        // }
+        let info = format!(" b:{}%", self.stats.battery_level);
 
         buf.set_string(
             0,
@@ -182,46 +210,65 @@ impl App {
         match event {
             Event::ButtonUp(events::Button::A) => match self.selected_tab {
                 SelectedTab::Remote => {
+                    self.touch_tab();
                     self.sender
-                        .publish(Event::Remote(events::Remote::OnOff))
+                        .publish(Event::Remote(self.tv.current_btn))
                         .await
                 }
                 _ => {}
             },
-            Event::ButtonUp(events::Button::B) => {}
-            Event::ButtonUp(events::Button::C) => {
-                self.next_tab();
+            Event::ButtonUp(events::Button::B) => match self.selected_tab {
+                SelectedTab::Remote => {
+                    self.touch_tab();
+                    self.tv.next_btn();
+                }
+                _ => {}
+            },
+            Event::ButtonDown(events::Button::C) => {
+                if self.c_start.is_none() {
+                    self.c_start = Some(Instant::now());
+                }
             }
-            Event::BatteryLevelUpdated { level } => {
-                self.battery_level = level;
+            Event::ButtonUp(events::Button::C) => {
+                let held_ms = self.c_held_time();
+
+                if self.tab_touched {
+                    if self.c_held_time() > 500 {
+                        self.next_tab();
+                    } else {
+                        match self.selected_tab {
+                            SelectedTab::Remote => {
+                                self.tv.prev_btn();
+                            }
+                            _ => {}
+                        }
+                    }
+                } else {
+                    self.next_tab();
+                }
+                self.c_start = None;
+            }
+            Event::StatsUpdated(stats) => {
+                self.stats = stats;
             }
             _ => {}
         }
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, strum::EnumIter, strum::EnumCount, strum::FromRepr)]
 pub enum SelectedTab {
-    Main,
-    Telegram,
+    // Main,
+    // Telegram,
     Remote,
     Info,
 }
 
 impl SelectedTab {
-    pub fn titles() -> Vec<String> {
-        let mut titles = Vec::with_capacity(4);
-        titles.push(Self::Main.title());
-        titles.push(Self::Telegram.title());
-        titles.push(Self::Remote.title());
-        titles.push(Self::Info.title());
-        titles
-    }
-
     pub fn title(self) -> String {
         match self {
-            SelectedTab::Main => "main",
-            SelectedTab::Telegram => "tg",
+            // SelectedTab::Main => "main",
+            // SelectedTab::Telegram => "tg",
             SelectedTab::Remote => "tv",
             SelectedTab::Info => "info",
         }
@@ -229,12 +276,16 @@ impl SelectedTab {
     }
 
     pub fn next(self) -> Self {
-        match self {
-            SelectedTab::Main => SelectedTab::Telegram,
-            SelectedTab::Telegram => SelectedTab::Remote,
-            SelectedTab::Remote => SelectedTab::Info,
-            SelectedTab::Info => SelectedTab::Main,
-        }
+        Self::from_repr((self as usize + 1) % Self::iter().len()).unwrap()
+    }
+
+    pub fn prev(self) -> Self {
+        let len = Self::iter().len();
+        Self::from_repr((self as usize + len - 1) % len).unwrap()
+    }
+
+    pub fn titles() -> Vec<String> {
+        Self::iter().map(|t| t.title()).collect::<Vec<_>>()
     }
 }
 

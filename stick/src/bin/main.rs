@@ -8,11 +8,12 @@
 #![deny(clippy::large_stack_frames)]
 
 use alloc::boxed::Box;
-use app::{App, EVENTS, Event, Sender};
+use app::{App, EVENTS, Event, Sender, Stats};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use embedded_hal_bus::spi::ExclusiveDevice;
+use esp_alloc::HEAP;
 use esp_backtrace as _;
 use esp_hal::Blocking;
 use esp_hal::analog::adc::{Adc, AdcConfig, AdcPin, Attenuation};
@@ -54,7 +55,13 @@ async fn battery_task(
         let battery_mv = (adc_value as u32 * 2600 * 4 / 4096) as u16;
         let level = ((battery_mv as i32 - 3300) * 100 / (4150 - 3300)).clamp(0, 100) as u8;
         log::info!("Battery: {} mV - {}%", battery_mv, level);
-        sender.publish(Event::BatteryLevelUpdated { level }).await;
+        sender
+            .publish(Event::StatsUpdated(Stats {
+                battery_level: level,
+                heap_used: HEAP.used(),
+                heap_free: HEAP.free(),
+            }))
+            .await;
         Timer::after(Duration::from_secs(30)).await;
     }
 }

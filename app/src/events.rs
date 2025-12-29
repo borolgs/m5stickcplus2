@@ -9,10 +9,17 @@ use embassy_sync::{
 #[derive(Debug, Clone)]
 pub enum Event {
     Init { version: String },
-    BatteryLevelUpdated { level: u8 },
+    StatsUpdated(Stats),
     ButtonDown(Button),
     ButtonUp(Button),
     Remote(Remote),
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Stats {
+    pub battery_level: u8,
+    pub heap_used: usize,
+    pub heap_free: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -22,9 +29,19 @@ pub enum Button {
     C,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, strum::EnumIter, strum::EnumCount, strum::FromRepr)]
 pub enum Remote {
     OnOff,
+    Home,
+    Back,
+    Ok,
+    Up,
+    Right,
+    Down,
+    Left,
+    Mute,
+    VolumeUp,
+    VolumeDown,
 }
 
 pub type Channel = PubSubChannel<CriticalSectionRawMutex, Event, 4, 4, 4>;

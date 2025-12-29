@@ -22,6 +22,7 @@ cargo +esp check --package stick --target xtensa-esp32-none-elf
 brew install sdl2
 export LIBRARY_PATH="$LIBRARY_PATH:$(brew --prefix)/lib"
 cargo run --package sim
+cargo check --package sim
 ```
 
 > [!CAUTION]

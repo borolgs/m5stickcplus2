@@ -15,13 +15,27 @@ pub async fn tx_task(
     loop {
         let msg = receiver.next_message_pure().await;
 
-        if let events::Event::Remote(events::Remote::OnOff) = msg {
-            log::info!(">>> Sending IR: Address=0x04, Command=0x08");
+        if let events::Event::Remote(remote_event) = msg {
+            let cmd = match remote_event {
+                app::Remote::OnOff => 0x08,
+                app::Remote::Home => 0x7C,
+                app::Remote::Back => 0x28,
+                app::Remote::Ok => 0x44,
+                app::Remote::Up => 0x40,
+                app::Remote::Right => 0x06,
+                app::Remote::Down => 0x41,
+                app::Remote::Left => 0x07,
+                app::Remote::Mute => 0x09,
+                app::Remote::VolumeUp => 0x02,
+                app::Remote::VolumeDown => 0x03,
+            };
 
-            let pulses = encode_nec_command(0x04, 0x08);
+            log::info!("Sending IR: Address=0x04, Command={}", cmd);
+
+            let pulses = encode_nec_command(0x04, cmd);
 
             match ir_tx_channel.transmit(&pulses).await {
-                Ok(_) => log::info!("IR signal sent successfully"),
+                Ok(_) => log::debug!("IR signal sent successfully"),
                 Err(e) => log::error!("IR transmit failed: {:?}", e),
             }
         }
