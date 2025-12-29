@@ -1,4 +1,76 @@
-use esp_hal::{gpio::Level, rmt::PulseCode};
+use app::events::{self, Receiver};
+use embassy_time::{Duration, Timer};
+use esp_hal::{
+    gpio::Level,
+    rmt::{PulseCode, RxChannelConfig, TxChannelConfig},
+};
+
+#[embassy_executor::task]
+pub async fn tx_task(
+    mut receiver: Receiver,
+    mut ir_tx_channel: esp_hal::rmt::Channel<'static, esp_hal::Async, esp_hal::rmt::Tx>,
+) {
+    log::info!("📡 IR Transmitter ready on GPIO19");
+
+    loop {
+        let msg = receiver.next_message_pure().await;
+
+        if let events::Event::Remote(events::Remote::OnOff) = msg {
+            log::info!(">>> Sending IR: Address=0x04, Command=0x08");
+
+            let pulses = encode_nec_command(0x04, 0x08);
+
+            match ir_tx_channel.transmit(&pulses).await {
+                Ok(_) => log::info!("IR signal sent successfully"),
+                Err(e) => log::error!("IR transmit failed: {:?}", e),
+            }
+        }
+    }
+}
+
+#[embassy_executor::task]
+pub async fn rx_task(
+    mut ir_rx_channel: esp_hal::rmt::Channel<'static, esp_hal::Async, esp_hal::rmt::Rx>,
+) {
+    log::info!("IR Receiver started");
+
+    let mut ir_buffer: [PulseCode; 48] = [PulseCode::default(); 48];
+
+    loop {
+        match ir_rx_channel.receive(&mut ir_buffer).await {
+            Ok(pulses) => {
+                if let Some((addr, cmd)) = decode_nec_command(&ir_buffer[..pulses.min(64)]) {
+                    log::info!("IR RX: Address=0x{:02X}, Command=0x{:02X}", addr, cmd);
+                }
+            }
+            Err(e) => {
+                log::warn!("RX error: {:?}, retrying in 1s...", e);
+                Timer::after(Duration::from_millis(1000)).await;
+            }
+        }
+    }
+}
+
+pub fn tx_config() -> TxChannelConfig {
+    TxChannelConfig::default()
+        .with_clk_divider(80)
+        .with_carrier_modulation(true)
+        .with_carrier_high(1053)
+        .with_carrier_low(1053)
+        .with_carrier_level(Level::High)
+        .with_idle_output_level(Level::Low)
+        .with_idle_output(true)
+}
+
+pub fn rx_config() -> RxChannelConfig {
+    RxChannelConfig::default()
+        .with_clk_divider(80)
+        .with_filter_threshold(50)
+        .with_idle_threshold(30000)
+        .with_carrier_modulation(false)
+        .with_carrier_high(1)
+        .with_carrier_low(1)
+}
 
 /// Encode NEC IR command into RMT pulses
 ///

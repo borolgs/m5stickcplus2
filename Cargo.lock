@@ -1809,6 +1809,7 @@ name = "sim"
 version = "0.1.0"
 dependencies = [
  "app",
+ "critical-section",
  "embassy-executor",
  "embassy-sync 0.7.2",
  "embassy-time",

@@ -1,6 +1,6 @@
 use app::{
     App,
-    events::{self, Receiver},
+    events::{self, EVENTS, Receiver},
 };
 use embassy_executor::Spawner;
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
@@ -34,9 +34,7 @@ async fn main(spawner: Spawner) {
 
     let mut display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(Size::new(240, 135));
 
-    let channel = Box::leak(Box::new(app::events::channel()));
-
-    let btn_sender = channel.publisher().unwrap();
+    let btn_sender = EVENTS.publisher().unwrap();
 
     let backend_config = EmbeddedBackendConfig {
         flush_callback: Box::new(move |display| {
@@ -79,11 +77,8 @@ async fn main(spawner: Spawner) {
     let mut terminal = Terminal::new(backend).unwrap();
 
     spawner
-        .spawn(event_handler(channel.subscriber().unwrap()))
+        .spawn(event_handler(EVENTS.subscriber().unwrap()))
         .unwrap();
 
-    App::new(channel.publisher().unwrap(), channel.subscriber().unwrap())
-        .run(&mut terminal)
-        .await
-        .unwrap();
+    App::new().run(&mut terminal).await.unwrap();
 }

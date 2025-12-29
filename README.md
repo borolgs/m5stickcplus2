@@ -15,6 +15,7 @@ The `app` crate is hardware-agnostic and receives all input via Embassy event ch
 source ~/export-esp.sh
 # cargo +esp run --package stick --release
 cargo +esp run --package stick --release --target xtensa-esp32-none-elf
+cargo +esp check --package stick --target xtensa-esp32-none-elf
 
 # simulator
 # https://crates.io/crates/embedded-graphics-simulator

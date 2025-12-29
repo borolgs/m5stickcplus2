@@ -13,7 +13,7 @@ use ratatui::{
 use std::{string::String, vec::Vec};
 
 use crate::{
-    events::{self, Event, Receiver, Sender},
+    events::{self, EVENTS, Event, Receiver, Sender},
     layout::AppLayout,
 };
 
@@ -29,7 +29,9 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(sender: Sender, receiver: Receiver) -> Self {
+    pub fn new() -> Self {
+        let sender = EVENTS.publisher().unwrap();
+        let receiver = EVENTS.subscriber().unwrap();
         Self {
             sender,
             receiver,
