@@ -8,14 +8,16 @@
 #![deny(clippy::large_stack_frames)]
 
 use alloc::boxed::Box;
-use app::{App, EVENTS};
+use app::{App, EVENTS, Event, Sender};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
-use esp_hal::analog::adc::{Adc, AdcConfig, Attenuation};
+use esp_hal::Blocking;
+use esp_hal::analog::adc::{Adc, AdcConfig, AdcPin, Attenuation};
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+use esp_hal::peripherals::{ADC1, GPIO38};
 use esp_hal::rmt::{Rmt, RxChannelCreator, TxChannelCreator};
 use esp_hal::spi::master::{Config, Spi};
 use esp_hal::time::Rate;
@@ -41,6 +43,22 @@ async fn buttons_task(mut button: Buttons) {
     }
 }
 
+#[embassy_executor::task]
+async fn battery_task(
+    mut adc: Adc<'static, ADC1<'static>, Blocking>,
+    mut pin: AdcPin<GPIO38<'static>, ADC1<'static>>,
+    sender: Sender,
+) {
+    loop {
+        let adc_value: u16 = nb::block!(adc.read_oneshot(&mut pin)).unwrap();
+        let battery_mv = (adc_value as u32 * 2600 * 4 / 4096) as u16;
+        let level = ((battery_mv as i32 - 3300) * 100 / (4150 - 3300)).clamp(0, 100) as u8;
+        log::info!("Battery: {} mV - {}%", battery_mv, level);
+        sender.publish(Event::BatteryLevelUpdated { level }).await;
+        Timer::after(Duration::from_secs(30)).await;
+    }
+}
+
 #[allow(
     clippy::large_stack_frames,
     reason = "it's not unusual to allocate larger buffers etc. in main"
@@ -58,10 +76,12 @@ async fn main(spawner: Spawner) -> ! {
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 98768);
     esp_alloc::heap_allocator!(size: 80000);
 
-    // battery
     let mut adc_config = AdcConfig::new();
-    let mut battery_pin = adc_config.enable_pin(peripherals.GPIO38, Attenuation::_11dB);
-    let mut adc = Adc::new(peripherals.ADC1, adc_config);
+    let battery_pin = adc_config.enable_pin(peripherals.GPIO38, Attenuation::_11dB);
+    let adc = Adc::new(peripherals.ADC1, adc_config);
+    spawner
+        .spawn(battery_task(adc, battery_pin, EVENTS.publisher().unwrap()))
+        .unwrap();
 
     let output_config = OutputConfig::default();
     let button_config = InputConfig::default().with_pull(Pull::Up);
@@ -118,16 +138,6 @@ async fn main(spawner: Spawner) -> ! {
         Input::new(peripherals.GPIO37, button_config),
         Input::new(peripherals.GPIO39, button_config),
         Input::new(peripherals.GPIO35, button_config),
-    );
-
-    let adc_value: u16 = nb::block!(adc.read_oneshot(&mut battery_pin)).unwrap();
-    let battery_mv = adc_value * 2;
-    let battery_percent = ((battery_mv as i32 - 3300) * 100 / (4150 - 3350)).clamp(0, 100);
-    log::info!(
-        "Battery: {} mV ({:.2}V) - {}%",
-        battery_mv,
-        battery_mv as f32 / 1000.0,
-        battery_percent
     );
 
     let mut app = App::new();

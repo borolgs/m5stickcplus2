@@ -9,6 +9,7 @@ use embassy_sync::{
 #[derive(Debug, Clone)]
 pub enum Event {
     Init { version: String },
+    BatteryLevelUpdated { level: u8 },
     ButtonDown(Button),
     ButtonUp(Button),
     Remote(Remote),

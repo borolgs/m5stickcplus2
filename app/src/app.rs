@@ -25,7 +25,7 @@ pub struct App {
     pub layout: AppLayout,
     // exit_start: Option<Instant>,
     selected_tab: SelectedTab,
-    battery_level: i32,
+    battery_level: u8,
 }
 
 impl App {
@@ -39,7 +39,7 @@ impl App {
             layout: AppLayout::new(Rect::default()),
             // exit_start: None,
             selected_tab: SelectedTab::Main,
-            battery_level: 0, // TODO
+            battery_level: 0,
         }
     }
 
@@ -191,6 +191,9 @@ impl App {
             Event::ButtonUp(events::Button::B) => {}
             Event::ButtonUp(events::Button::C) => {
                 self.next_tab();
+            }
+            Event::BatteryLevelUpdated { level } => {
+                self.battery_level = level;
             }
             _ => {}
         }
