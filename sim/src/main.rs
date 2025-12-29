@@ -1,8 +1,9 @@
 use app::{
-    App,
+    App, Sender,
     events::{self, EVENTS, Receiver},
 };
 use embassy_executor::Spawner;
+use embassy_time::{Duration, Timer};
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window, sdl2,
@@ -12,10 +13,20 @@ use mousefood::prelude::*;
 use ratatui::Terminal;
 
 #[embassy_executor::task]
+async fn draw_task(sender: Sender) {
+    loop {
+        sender.publish(app::Event::Draw).await;
+        Timer::after(Duration::from_millis(50)).await;
+    }
+}
+
+#[embassy_executor::task]
 async fn event_handler(mut receiver: Receiver) {
     loop {
         let event = receiver.next_message_pure().await;
-        info!("Message from app: {:?}", event);
+        if !matches!(event, app::Event::Draw) {
+            info!("Message from app: {:?}", event);
+        }
     }
 }
 
@@ -28,7 +39,7 @@ async fn main(spawner: Spawner) {
 
     let output_settings = OutputSettingsBuilder::new().scale(3).build();
     let mut window = Window::new(
-        "M5StickC PLUS2 Simulator. Buttons: 1=A 2=B 3=C",
+        "M5StickC PLUS2 Simulator. Buttons: 1=C 2=A 3=B",
         &output_settings,
     );
 
@@ -45,9 +56,9 @@ async fn main(spawner: Spawner) {
                     SimulatorEvent::Quit => panic!("simulator window closed"),
                     SimulatorEvent::KeyDown { keycode, .. } => {
                         if let Some(button) = match keycode {
-                            sdl2::Keycode::Num1 => Some(events::Button::A),
-                            sdl2::Keycode::Num2 => Some(events::Button::B),
-                            sdl2::Keycode::Num3 => Some(events::Button::C),
+                            sdl2::Keycode::Num1 => Some(events::Button::C),
+                            sdl2::Keycode::Num2 => Some(events::Button::A),
+                            sdl2::Keycode::Num3 => Some(events::Button::B),
                             _ => None,
                         } {
                             debug!("Key {:?} pressed -> Button {:?}", keycode, button);
@@ -56,9 +67,9 @@ async fn main(spawner: Spawner) {
                     }
                     SimulatorEvent::KeyUp { keycode, .. } => {
                         if let Some(button) = match keycode {
-                            sdl2::Keycode::Num1 => Some(events::Button::A),
-                            sdl2::Keycode::Num2 => Some(events::Button::B),
-                            sdl2::Keycode::Num3 => Some(events::Button::C),
+                            sdl2::Keycode::Num1 => Some(events::Button::C),
+                            sdl2::Keycode::Num2 => Some(events::Button::A),
+                            sdl2::Keycode::Num3 => Some(events::Button::B),
                             _ => None,
                         } {
                             debug!("Key {:?} released -> Button {:?}", keycode, button);
@@ -78,6 +89,10 @@ async fn main(spawner: Spawner) {
 
     spawner
         .spawn(event_handler(EVENTS.subscriber().unwrap()))
+        .unwrap();
+
+    spawner
+        .spawn(draw_task(EVENTS.publisher().unwrap()))
         .unwrap();
 
     App::new().run(&mut terminal).await.unwrap();

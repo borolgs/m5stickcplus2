@@ -1,5 +1,8 @@
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use embassy_time::Instant;
 use ratatui::{
@@ -29,6 +32,7 @@ pub struct App {
     exit: bool,
     pub layout: AppLayout,
     c_start: Option<Instant>,
+    b_start: Option<Instant>,
     selected_tab: SelectedTab,
     tab_touched: bool,
     stats: events::Stats,
@@ -45,6 +49,7 @@ impl App {
             exit: false,
             layout: AppLayout::new(Rect::default()),
             c_start: None,
+            b_start: None,
             selected_tab: SelectedTab::Remote,
             tab_touched: false,
             tv: TVState {
@@ -60,26 +65,8 @@ impl App {
         while !self.exit {
             terminal.draw(|frame| self.draw(frame))?;
 
-            // simulator dev: timeout prevents deadlock (SDL events polled in flush_callback)
-            #[cfg(feature = "std")]
-            {
-                use embassy_time::Duration;
-                match embassy_time::with_timeout(
-                    Duration::from_millis(16),
-                    self.receiver.next_message_pure(),
-                )
-                .await
-                {
-                    Ok(msg) => self.handle_events(msg).await,
-                    Err(_) => {}
-                }
-            }
-
-            #[cfg(not(feature = "std"))]
-            {
-                let msg = self.receiver.next_message_pure().await;
-                self.handle_events(msg).await;
-            }
+            let msg = self.receiver.next_message_pure().await;
+            self.handle_events(msg).await;
         }
 
         Ok(())
@@ -111,6 +98,16 @@ impl App {
         0
     }
 
+    fn b_held_time(&self) -> u64 {
+        if let Some(start) = self.b_start {
+            let elapsed = start.elapsed();
+            let held_ms = elapsed.as_millis();
+            return held_ms;
+        }
+
+        0
+    }
+
     fn draw(&self, frame: &mut Frame) {
         let AppLayout {
             header,
@@ -134,20 +131,15 @@ impl App {
         let titles = SelectedTab::titles();
         let selected_tab_index = self.selected_tab as usize;
 
-        let bg_color = Color::Rgb(50, 50, 50);
-        // TODO: re-enable exit timer
-        // self
-        //     .exit_start
-        //     .and_then(|start| {
-        //         let elapsed = start.elapsed();
-        //         let held_ms = elapsed.as_millis();
-        //         if held_ms < 300 {
-        //             return None;
-        //         }
-        //
-        //         Some(Color::Rgb(ms_to_red(held_ms), 10, 10))
-        //     })
-        //     .unwrap_or(Color::Rgb(10, 10, 10));
+        let bg_color = Color::Rgb(
+            if self.c_held_time() < 500 {
+                50
+            } else {
+                ms_to_red(self.c_held_time())
+            },
+            50,
+            50,
+        );
 
         Tabs::new(titles)
             .highlight_style(Style::new().fg(Color::White))
@@ -196,14 +188,58 @@ impl App {
     }
 
     fn draw_footer(&self, area: Rect, buf: &mut Buffer) {
-        let info = format!(" b:{}%", self.stats.battery_level);
+        if self.c_held_time() > 1000 {
+            buf.set_string(
+                0,
+                area.bottom().saturating_sub(1),
+                " hold to shut down...",
+                Style::new().fg(Color::Gray),
+            );
+            return;
+        }
 
-        buf.set_string(
-            0,
-            area.bottom().saturating_sub(1),
-            &info,
-            Style::new().fg(Color::Gray),
-        );
+        match self.selected_tab {
+            SelectedTab::Remote => {
+                let c_mode = {
+                    let mut mode = "c - next tab";
+
+                    if self.tab_touched {
+                        if self.c_held_time() < 500 {
+                            mode = "c - prev btn";
+                        }
+                    }
+
+                    mode
+                };
+
+                let b_mode = {
+                    let mut mode = "b - next btn";
+
+                    if self.b_held_time() > 300 {
+                        mode = "b - next row"
+                    }
+
+                    mode
+                };
+
+                let btns = [c_mode, b_mode]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let info = format!(" {}", btns);
+
+                buf.set_string(
+                    0,
+                    area.bottom().saturating_sub(1),
+                    &info,
+                    Style::new().fg(Color::Gray),
+                );
+            }
+            _ => {}
+        }
     }
 
     async fn handle_events(&mut self, event: Event) {
@@ -217,21 +253,31 @@ impl App {
                 }
                 _ => {}
             },
-            Event::ButtonUp(events::Button::B) => match self.selected_tab {
-                SelectedTab::Remote => {
-                    self.touch_tab();
-                    self.tv.next_btn();
+            Event::ButtonDown(events::Button::B) => {
+                if self.b_start.is_none() {
+                    self.b_start = Some(Instant::now());
                 }
-                _ => {}
-            },
+            }
+            Event::ButtonUp(events::Button::B) => {
+                match self.selected_tab {
+                    SelectedTab::Remote => {
+                        self.touch_tab();
+                        if self.b_held_time() > 300 {
+                            self.tv.next_row();
+                        } else {
+                            self.tv.next_btn();
+                        }
+                    }
+                    _ => {}
+                };
+                self.b_start = None;
+            }
             Event::ButtonDown(events::Button::C) => {
                 if self.c_start.is_none() {
                     self.c_start = Some(Instant::now());
                 }
             }
             Event::ButtonUp(events::Button::C) => {
-                let held_ms = self.c_held_time();
-
                 if self.tab_touched {
                     if self.c_held_time() > 500 {
                         self.next_tab();
@@ -256,7 +302,7 @@ impl App {
     }
 }
 
-#[derive(Clone, Copy, strum::EnumIter, strum::EnumCount, strum::FromRepr)]
+#[derive(Clone, Copy, PartialEq, strum::EnumIter, strum::EnumCount, strum::FromRepr)]
 pub enum SelectedTab {
     // Main,
     // Telegram,
@@ -292,7 +338,7 @@ impl SelectedTab {
 /// 0 -> 30, 3000 -> 255
 pub fn ms_to_red(ms: u64) -> u8 {
     const MAX_MS: u64 = 3000;
-    const MIN_RED: u64 = 10;
+    const MIN_RED: u64 = 50;
     const MAX_RED: u64 = 255;
     const RED_RANGE: u64 = MAX_RED - MIN_RED; // 225
 

@@ -65,6 +65,10 @@ impl Buttons {
                 .publish(Event::ButtonUp(events::Button::C))
                 .await;
         }
+
+        if self.a.is_pressed() | self.b.is_pressed() | self.c.is_pressed() {
+            self.sender.publish(Event::Draw).await;
+        }
     }
 }
 

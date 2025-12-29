@@ -9,6 +9,7 @@ use embassy_sync::{
 #[derive(Debug, Clone)]
 pub enum Event {
     Init { version: String },
+    Draw,
     StatsUpdated(Stats),
     ButtonDown(Button),
     ButtonUp(Button),

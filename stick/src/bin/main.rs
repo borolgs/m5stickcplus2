@@ -52,8 +52,8 @@ async fn battery_task(
 ) {
     loop {
         let adc_value: u16 = nb::block!(adc.read_oneshot(&mut pin)).unwrap();
-        let battery_mv = (adc_value as u32 * 2600 * 4 / 4096) as u16;
-        let level = ((battery_mv as i32 - 3300) * 100 / (4150 - 3300)).clamp(0, 100) as u8;
+        let battery_mv = (adc_value as u32 * 3800 * 2 / 4096) as u16;
+        let level = ((battery_mv as i32 - 3300) * 100 / (4150 - 3350)).clamp(0, 100) as u8;
         log::info!("Battery: {} mV - {}%", battery_mv, level);
         sender
             .publish(Event::StatsUpdated(Stats {
