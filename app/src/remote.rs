@@ -29,6 +29,22 @@ impl TVState {
         }
     }
 
+    pub fn prev_row(&mut self) -> Remote {
+        let cols = 4;
+        let len = Remote::iter().len();
+        let col = self.current_btn as usize % cols;
+        let current_idx = self.current_btn as usize;
+
+        self.current_btn = if current_idx < cols {
+            let last_row_start = (len - 1) / cols * cols;
+            let new_idx = last_row_start + col;
+            Remote::from_repr(if new_idx >= len { new_idx - cols } else { new_idx }).unwrap()
+        } else {
+            Remote::from_repr(current_idx - cols).unwrap()
+        };
+        self.current_btn
+    }
+
     pub fn next_row(&mut self) -> Remote {
         let cols = 4;
         let len = Remote::iter().len();
