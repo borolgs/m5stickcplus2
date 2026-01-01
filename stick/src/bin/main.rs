@@ -18,6 +18,7 @@ use esp_backtrace as _;
 use esp_hal::Blocking;
 use esp_hal::analog::adc::{Adc, AdcConfig, AdcPin, Attenuation};
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+use esp_hal::i2c::master::I2c;
 use esp_hal::peripherals::{ADC1, GPIO38};
 use esp_hal::rmt::{Rmt, RxChannelCreator, TxChannelCreator};
 use esp_hal::spi::master::{Config, Spi};
@@ -32,6 +33,7 @@ use ratatui::Terminal;
 use stick::battery::get_battery_level;
 use stick::button::Buttons;
 use stick::ir;
+use stick::minijoyc::MiniJoyC;
 
 extern crate alloc;
 
@@ -46,7 +48,7 @@ async fn buttons_task(mut button: Buttons) {
 }
 
 #[embassy_executor::task]
-async fn battery_task(
+async fn stats_task(
     mut adc: Adc<'static, ADC1<'static>, Blocking>,
     mut pin: AdcPin<GPIO38<'static>, ADC1<'static>>,
     sender: Sender,
@@ -63,6 +65,12 @@ async fn battery_task(
             .await;
         Timer::after(Duration::from_secs(30)).await;
     }
+}
+
+#[embassy_executor::task]
+async fn minijoyc_task(mut joyc: MiniJoyC) {
+    Timer::after(Duration::from_millis(50)).await;
+    joyc.run().await;
 }
 
 #[allow(
@@ -86,7 +94,7 @@ async fn main(spawner: Spawner) -> ! {
     let battery_pin = adc_config.enable_pin(peripherals.GPIO38, Attenuation::_11dB);
     let adc = Adc::new(peripherals.ADC1, adc_config);
     spawner
-        .spawn(battery_task(adc, battery_pin, EVENTS.publisher().unwrap()))
+        .spawn(stats_task(adc, battery_pin, EVENTS.publisher().unwrap()))
         .unwrap();
 
     let output_config = OutputConfig::default();
@@ -149,6 +157,25 @@ async fn main(spawner: Spawner) -> ! {
     let mut app = App::new();
 
     spawner.spawn(buttons_task(buttons)).unwrap();
+
+    let i2c = I2c::new(
+        peripherals.I2C0,
+        esp_hal::i2c::master::Config::default()
+            .with_frequency(Rate::from_khz(100))
+            .with_software_timeout(esp_hal::i2c::master::SoftwareTimeout::PerByte(
+                esp_hal::time::Duration::from_millis(10),
+            )),
+    )
+    .unwrap()
+    .with_sda(peripherals.GPIO0)
+    .with_scl(peripherals.GPIO26)
+    .into_async();
+
+    let mut joyc = MiniJoyC::new(i2c, EVENTS.publisher().unwrap());
+
+    if joyc.is_connected().await {
+        spawner.spawn(minijoyc_task(joyc)).unwrap();
+    }
 
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80))
         .unwrap()

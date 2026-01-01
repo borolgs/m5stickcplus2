@@ -19,7 +19,7 @@ use std::{string::String, vec::Vec};
 use strum::IntoEnumIterator;
 
 use crate::{
-    Stats,
+    Stats, StickHat,
     events::{self, EVENTS, Event, Receiver, Sender},
     layout::AppLayout,
     remote::{TVRemote, TVState},
@@ -30,13 +30,15 @@ pub struct App {
     sender: Sender,
     receiver: Receiver,
     exit: bool,
-    pub layout: AppLayout,
+    layout: AppLayout,
     c_start: Option<Instant>,
     b_start: Option<Instant>,
     selected_tab: SelectedTab,
     tab_touched: bool,
     stats: events::Stats,
     tv: TVState,
+    hat: Option<StickHat>,
+    debug: String,
 }
 
 impl App {
@@ -56,6 +58,8 @@ impl App {
                 current_btn: events::Remote::OnOff,
             },
             stats: Stats::default(),
+            hat: None,
+            debug: String::from(""),
         }
     }
 
@@ -122,6 +126,16 @@ impl App {
         match self.selected_tab {
             SelectedTab::Remote => self.draw_remote(main, buf),
             SelectedTab::Info => self.draw_info(main, buf),
+            SelectedTab::Dev => {
+                Paragraph::new(self.debug.clone())
+                    .block(Block::new().padding(Padding {
+                        left: 1,
+                        right: 0,
+                        top: 1,
+                        bottom: 0,
+                    }))
+                    .render(main, buf);
+            }
         }
 
         self.draw_footer(footer, buf);
@@ -160,31 +174,38 @@ impl App {
     }
 
     fn draw_info(&self, area: Rect, buf: &mut Buffer) {
+        let info = [
+            ("battery", format!("{}%", self.stats.battery_level)),
+            (
+                "hat",
+                self.hat
+                    .map(|h| format!("{:?}", h))
+                    .unwrap_or("-".to_string()),
+            ),
+            (
+                "heap",
+                format!(
+                    "{}/{}",
+                    self.stats.heap_used / 1024,
+                    (self.stats.heap_used + self.stats.heap_free) / 1024
+                ),
+            ),
+        ];
         let horizontal = Layout::horizontal([Constraint::Max(10), Constraint::Fill(1)]);
-        let vertical = Layout::vertical((0..3).map(|_| Constraint::Length(1)));
+        let vertical = Layout::vertical((0..info.len()).map(|_| Constraint::Length(1)));
 
         let rows = vertical.split(area.inner(Margin::new(1, 1)));
-        let cells = rows
-            .iter()
-            .flat_map(|&row| horizontal.split(row).to_vec())
-            .collect::<Vec<_>>();
 
         let info_style = Style::new().fg(Color::DarkGray);
 
-        Paragraph::new("heap")
-            .style(info_style)
-            .render(cells[0], buf);
-        Paragraph::new(format!(
-            "{}/{}",
-            self.stats.heap_used / 1024,
-            (self.stats.heap_used + self.stats.heap_free) / 1024
-        ))
-        .render(cells[1], buf);
+        for (row, (title, value)) in rows.iter().cloned().zip(info) {
+            let [title_area, value_area] = horizontal.areas(row);
 
-        Paragraph::new("battery")
-            .style(info_style)
-            .render(cells[2], buf);
-        Paragraph::new(format!("{}%", self.stats.battery_level)).render(cells[3], buf);
+            Paragraph::new(title)
+                .style(info_style)
+                .render(title_area, buf);
+            Paragraph::new(value).render(value_area, buf);
+        }
     }
 
     fn draw_footer(&self, area: Rect, buf: &mut Buffer) {
@@ -244,6 +265,37 @@ impl App {
 
     async fn handle_events(&mut self, event: Event) {
         match event {
+            Event::InitHat(hat) => {
+                self.hat = Some(hat);
+            }
+            Event::JoyC(joyc_event) => {
+                self.touch_tab();
+                match self.selected_tab {
+                    SelectedTab::Remote => match joyc_event {
+                        crate::JoyC::Button => {
+                            self.sender
+                                .publish(Event::Remote(self.tv.current_btn))
+                                .await
+                        }
+                        crate::JoyC::Pos { dir, .. } => match dir {
+                            crate::JoycDirection::Up => {
+                                self.tv.prev_row();
+                            }
+                            crate::JoycDirection::Right => {
+                                self.tv.next_btn();
+                            }
+                            crate::JoycDirection::Down => {
+                                self.tv.next_row();
+                            }
+                            crate::JoycDirection::Left => {
+                                self.tv.prev_btn();
+                            }
+                            crate::JoycDirection::Center => {}
+                        },
+                    },
+                    _ => {}
+                };
+            }
             Event::ButtonUp(events::Button::A) => match self.selected_tab {
                 SelectedTab::Remote => {
                     self.touch_tab();
@@ -308,6 +360,7 @@ pub enum SelectedTab {
     // Telegram,
     Remote,
     Info,
+    Dev,
 }
 
 impl SelectedTab {
@@ -317,6 +370,7 @@ impl SelectedTab {
             // SelectedTab::Telegram => "tg",
             SelectedTab::Remote => "tv",
             SelectedTab::Info => "info",
+            SelectedTab::Dev => "dev",
         }
         .into()
     }
