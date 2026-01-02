@@ -20,11 +20,11 @@ use esp_hal::analog::adc::{Adc, AdcConfig, AdcPin, Attenuation};
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::I2c;
 use esp_hal::peripherals::{ADC1, GPIO38};
-use esp_hal::rmt::{Rmt, RxChannelCreator, TxChannelCreator};
 use esp_hal::spi::master::{Config, Spi};
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::{clock::CpuClock, delay::Delay};
+
 use mipidsi::interface::SpiInterface;
 use mipidsi::options::{ColorInversion, Orientation, Rotation};
 use mousefood::EmbeddedBackend;
@@ -32,7 +32,7 @@ use mousefood::EmbeddedBackendConfig;
 use ratatui::Terminal;
 use stick::battery::get_battery_level;
 use stick::button::Buttons;
-use stick::ir;
+
 use stick::minijoyc::MiniJoyC;
 
 extern crate alloc;
@@ -72,6 +72,15 @@ async fn minijoyc_task(mut joyc: MiniJoyC) {
     joyc.run().await;
 }
 
+macro_rules! mk_static {
+    ($t:ty,$val:expr) => {{
+        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
+        #[deny(unused_attributes)]
+        let x = STATIC_CELL.uninit().write(($val));
+        x
+    }};
+}
+
 #[allow(
     clippy::large_stack_frames,
     reason = "it's not unusual to allocate larger buffers etc. in main"
@@ -83,11 +92,47 @@ async fn main(spawner: Spawner) -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 98768);
+    esp_alloc::heap_allocator!(size: 160000);
+
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
 
-    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 98768);
-    esp_alloc::heap_allocator!(size: 80000);
+    #[cfg(feature = "radio")]
+    {
+        use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
+        use esp_radio::{
+            Controller,
+            esp_now::{EspNowManager, EspNowSender},
+        };
+
+        let radio_controller = mk_static!(Controller<'static>, esp_radio::init().unwrap());
+
+        let wifi = peripherals.WIFI;
+        let (mut controller, interfaces) =
+            esp_radio::wifi::new(radio_controller, wifi, Default::default()).unwrap();
+
+        controller.set_mode(esp_radio::wifi::WifiMode::Sta).unwrap();
+        controller.start().unwrap();
+
+        let esp_now = interfaces.esp_now;
+        esp_now.set_channel(11).unwrap();
+
+        log::info!("esp-now version {}", esp_now.version().unwrap());
+
+        let (manager, sender, receiver) = esp_now.split();
+
+        let manager = mk_static!(EspNowManager<'static>, manager);
+        let sender = mk_static!(
+            Mutex::<CriticalSectionRawMutex, EspNowSender<'static>>,
+            Mutex::<CriticalSectionRawMutex, _>::new(sender)
+        );
+
+        spawner
+            .spawn(stick::radio::listener(manager, receiver))
+            .ok();
+        spawner.spawn(stick::radio::broadcaster(sender)).ok();
+    }
 
     let mut adc_config = AdcConfig::new();
     let battery_pin = adc_config.enable_pin(peripherals.GPIO38, Attenuation::_11dB);
@@ -176,24 +221,24 @@ async fn main(spawner: Spawner) -> ! {
         spawner.spawn(minijoyc_task(joyc)).unwrap();
     }
 
-    let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80))
-        .unwrap()
-        .into_async();
+    #[cfg(feature = "ir")]
+    {
+        use esp_hal::rmt::{Rmt, TxChannelCreator};
+        use stick::ir;
 
-    let ir_tx_channel = rmt
-        .channel0
-        .configure_tx(peripherals.GPIO19, ir::tx_config())
-        .unwrap();
+        let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80))
+            .unwrap()
+            .into_async();
 
-    let ir_rx_channel = rmt
-        .channel1
-        .configure_rx(peripherals.GPIO33, ir::rx_config())
-        .unwrap();
+        let ir_tx_channel = rmt
+            .channel0
+            .configure_tx(peripherals.GPIO19, ir::tx_config())
+            .unwrap();
 
-    spawner
-        .spawn(ir::tx_task(EVENTS.subscriber().unwrap(), ir_tx_channel))
-        .unwrap();
-    spawner.spawn(ir::rx_task(ir_rx_channel)).unwrap();
+        spawner
+            .spawn(ir::tx_task(EVENTS.subscriber().unwrap(), ir_tx_channel))
+            .unwrap();
+    }
 
     let _backlight = Output::new(peripherals.GPIO27, Level::High, output_config);
 

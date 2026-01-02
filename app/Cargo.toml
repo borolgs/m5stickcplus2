@@ -8,6 +8,7 @@ version.workspace = true
 default = ["alloc"]
 std = []
 alloc = []
+tv = []
 
 [dependencies]
 log = "0.4.27"

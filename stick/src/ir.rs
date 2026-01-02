@@ -42,6 +42,15 @@ pub async fn tx_task(
     }
 }
 
+/// Usage
+/// ```
+/// let ir_rx_channel = rmt
+///     .channel1
+///     .configure_rx(peripherals.GPIO33, ir::rx_config())
+///     .unwrap();
+///
+/// spawner.spawn(ir::rx_task(ir_rx_channel)).unwrap();
+/// ```
 #[embassy_executor::task]
 pub async fn rx_task(
     mut ir_rx_channel: esp_hal::rmt::Channel<'static, esp_hal::Async, esp_hal::rmt::Rx>,

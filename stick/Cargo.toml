@@ -8,13 +8,25 @@ version.workspace = true
 name = "stick"
 path = "./src/bin/main.rs"
 
+[features]
+default = ["ir", "radio"]
+ir = ["app/tv"]
+radio = ["esp-radio"]
+
 [dependencies]
 app = { path = "../app" }
 
 log = "0.4.27"
 
 esp-hal = { version = "~1.0", features = ["esp32", "log-04", "unstable"] }
-esp-radio = { version = "0.17.0", features = ["esp32", "log-04", "unstable"] }
+esp-rtos = { version = "0.2.0", features = ["embassy", "esp-alloc", "esp32", "esp-radio" ] }
+esp-radio = { version = "0.17.0", optional = true, features = [
+  "esp-alloc",
+  "esp-now",
+  "esp32",
+  "unstable",
+  "wifi",
+  ] }
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["esp32", "log-04"] }
 esp-alloc = "0.9.0"
 esp-backtrace = { version = "0.18.1", features = [
@@ -24,12 +36,12 @@ esp-backtrace = { version = "0.18.1", features = [
 ] }
 esp-println = { version = "0.16.1", features = ["esp32", "log-04"] }
 
-esp-rtos = { version = "0.2.0", features = ["embassy", "esp-alloc", "esp32"] }
 embassy-executor = { version = "0.9.1", features = [] }
 embassy-time     = "0.5.0"
 embassy-sync = { version = "0.7.2" }
 embassy-futures = "0.1.2"
 
+static_cell = { version = "2.1.0", features = ["nightly"] }
 critical-section = "1.2.0"
 
 embedded-graphics = "0.8.1"

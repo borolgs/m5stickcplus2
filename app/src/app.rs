@@ -9,7 +9,7 @@ use ratatui::{
     Frame, Terminal,
     buffer::Buffer,
     layout::{Constraint, Layout, Margin, Rect},
-    prelude::{Backend, StatefulWidget, Widget},
+    prelude::{Backend, Widget},
     style::{Color, Style, Stylize},
     widgets::{Block, Padding, Paragraph, Tabs},
 };
@@ -22,8 +22,10 @@ use crate::{
     Stats, StickHat,
     events::{self, EVENTS, Event, Receiver, Sender},
     layout::AppLayout,
-    remote::{TVRemote, TVState},
 };
+
+#[cfg(feature = "tv")]
+use crate::remote::{TVRemote, TVState};
 
 pub struct App {
     #[allow(dead_code)]
@@ -36,6 +38,7 @@ pub struct App {
     selected_tab: SelectedTab,
     tab_touched: bool,
     stats: events::Stats,
+    #[cfg(feature = "tv")]
     tv: TVState,
     hat: Option<StickHat>,
     debug: String,
@@ -52,8 +55,9 @@ impl App {
             layout: AppLayout::new(Rect::default()),
             c_start: None,
             b_start: None,
-            selected_tab: SelectedTab::Remote,
+            selected_tab: SelectedTab::Info,
             tab_touched: false,
+            #[cfg(feature = "tv")]
             tv: TVState {
                 current_btn: events::Remote::OnOff,
             },
@@ -77,7 +81,10 @@ impl App {
     }
 
     fn next_tab(&mut self) {
-        self.tv.current_btn = events::Remote::OnOff;
+        #[cfg(feature = "tv")]
+        {
+            self.tv.current_btn = events::Remote::OnOff;
+        }
         self.selected_tab = self.selected_tab.next();
         self.tab_touched = false;
     }
@@ -102,6 +109,7 @@ impl App {
         0
     }
 
+    #[allow(unused)]
     fn b_held_time(&self) -> u64 {
         if let Some(start) = self.b_start {
             let elapsed = start.elapsed();
@@ -124,6 +132,7 @@ impl App {
         self.draw_tabs(header, buf);
 
         match self.selected_tab {
+            #[cfg(feature = "tv")]
             SelectedTab::Remote => self.draw_remote(main, buf),
             SelectedTab::Info => self.draw_info(main, buf),
             SelectedTab::Dev => {
@@ -169,7 +178,9 @@ impl App {
             .render(area, buf);
     }
 
+    #[cfg(feature = "tv")]
     fn draw_remote(&self, area: Rect, buf: &mut Buffer) {
+        use ratatui::prelude::StatefulWidget;
         TVRemote::new().render(area, buf, &mut self.tv.clone());
     }
 
@@ -220,6 +231,7 @@ impl App {
         }
 
         match self.selected_tab {
+            #[cfg(feature = "tv")]
             SelectedTab::Remote if !matches!(self.hat, Some(events::StickHat::MiniJoyC)) => {
                 let c_mode = {
                     let mut mode = "c - next tab";
@@ -268,9 +280,11 @@ impl App {
             Event::InitHat(hat) => {
                 self.hat = Some(hat);
             }
+            #[allow(unused)]
             Event::JoyC(joyc_event) => {
                 self.touch_tab();
                 match self.selected_tab {
+                    #[cfg(feature = "tv")]
                     SelectedTab::Remote => match joyc_event {
                         crate::JoyC::Button => {
                             self.sender
@@ -297,6 +311,7 @@ impl App {
                 };
             }
             Event::ButtonUp(events::Button::A) => match self.selected_tab {
+                #[cfg(feature = "tv")]
                 SelectedTab::Remote => {
                     self.touch_tab();
                     self.sender
@@ -312,6 +327,7 @@ impl App {
             }
             Event::ButtonUp(events::Button::B) => {
                 match self.selected_tab {
+                    #[cfg(feature = "tv")]
                     SelectedTab::Remote => {
                         self.touch_tab();
                         if self.b_held_time() > 300 {
@@ -337,6 +353,7 @@ impl App {
                         self.next_tab();
                     } else {
                         match self.selected_tab {
+                            #[cfg(feature = "tv")]
                             SelectedTab::Remote => {
                                 self.tv.prev_btn();
                             }
@@ -356,27 +373,22 @@ impl App {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, strum::EnumIter, strum::EnumCount, strum::FromRepr)]
+#[derive(
+    Clone, Copy, PartialEq, strum::EnumIter, strum::EnumCount, strum::FromRepr, strum::Display,
+)]
 pub enum SelectedTab {
     // Main,
     // Telegram,
+    #[cfg(feature = "tv")]
+    #[strum(to_string = "tv")]
     Remote,
+    #[strum(to_string = "info")]
     Info,
+    #[strum(to_string = "dev")]
     Dev,
 }
 
 impl SelectedTab {
-    pub fn title(self) -> String {
-        match self {
-            // SelectedTab::Main => "main",
-            // SelectedTab::Telegram => "tg",
-            SelectedTab::Remote => "tv",
-            SelectedTab::Info => "info",
-            SelectedTab::Dev => "dev",
-        }
-        .into()
-    }
-
     pub fn next(self) -> Self {
         Self::from_repr((self as usize + 1) % Self::iter().len()).unwrap()
     }
@@ -387,7 +399,7 @@ impl SelectedTab {
     }
 
     pub fn titles() -> Vec<String> {
-        Self::iter().map(|t| t.title()).collect::<Vec<_>>()
+        Self::iter().map(|t| t.to_string()).collect::<Vec<_>>()
     }
 }
 
