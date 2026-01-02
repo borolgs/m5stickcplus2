@@ -220,7 +220,7 @@ impl App {
         }
 
         match self.selected_tab {
-            SelectedTab::Remote => {
+            SelectedTab::Remote if !matches!(self.hat, Some(events::StickHat::MiniJoyC)) => {
                 let c_mode = {
                     let mut mode = "c - next tab";
 
@@ -330,7 +330,9 @@ impl App {
                 }
             }
             Event::ButtonUp(events::Button::C) => {
-                if self.tab_touched {
+                if matches!(self.hat, Some(events::StickHat::MiniJoyC)) {
+                    self.next_tab();
+                } else if self.tab_touched {
                     if self.c_held_time() > 500 {
                         self.next_tab();
                     } else {
