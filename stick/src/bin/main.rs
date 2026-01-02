@@ -69,7 +69,6 @@ async fn stats_task(
 
 #[embassy_executor::task]
 async fn minijoyc_task(mut joyc: MiniJoyC) {
-    Timer::after(Duration::from_millis(50)).await;
     joyc.run().await;
 }
 

@@ -66,7 +66,7 @@ impl MiniJoyC {
             return;
         };
 
-        let direction = Self::classify_direction(x, y, 20);
+        let direction = Self::classify_direction(x, y, 35);
 
         if direction != self.prev_direction {
             let event = match direction {

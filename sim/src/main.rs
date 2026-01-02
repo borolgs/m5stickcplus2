@@ -39,7 +39,7 @@ async fn main(spawner: Spawner) {
 
     let output_settings = OutputSettingsBuilder::new().scale(3).build();
     let mut window = Window::new(
-        "M5StickC PLUS2 Simulator. Buttons: 1=C 2=A 3=B",
+        "M5StickC PLUS2 Simulator. Buttons: 1=C 2=A 3=B, Joystick: arrows + space",
         &output_settings,
     );
 
@@ -64,6 +64,30 @@ async fn main(spawner: Spawner) {
                             debug!("Key {:?} pressed -> Button {:?}", keycode, button);
                             btn_sender.publish_immediate(events::Event::ButtonDown(button));
                         }
+
+                        if let Some(joyc_evt) = match keycode {
+                            sdl2::Keycode::DOWN => Some(events::JoyC::Pos {
+                                dir: events::JoycDirection::Down,
+                                val: (0, 0),
+                            }),
+                            sdl2::Keycode::Up => Some(events::JoyC::Pos {
+                                dir: events::JoycDirection::Up,
+                                val: (0, 0),
+                            }),
+                            sdl2::Keycode::LEFT => Some(events::JoyC::Pos {
+                                dir: events::JoycDirection::Left,
+                                val: (0, 0),
+                            }),
+                            sdl2::Keycode::RIGHT => Some(events::JoyC::Pos {
+                                dir: events::JoycDirection::Right,
+                                val: (0, 0),
+                            }),
+                            sdl2::Keycode::SPACE => Some(events::JoyC::Button),
+                            _ => None,
+                        } {
+                            debug!("Joystick {:?} -> {:?}", keycode, joyc_evt);
+                            btn_sender.publish_immediate(events::Event::JoyC(joyc_evt));
+                        }
                     }
                     SimulatorEvent::KeyUp { keycode, .. } => {
                         if let Some(button) = match keycode {
@@ -87,6 +111,8 @@ async fn main(spawner: Spawner) {
 
     let mut terminal = Terminal::new(backend).unwrap();
 
+    let mut app = App::new();
+
     spawner
         .spawn(event_handler(EVENTS.subscriber().unwrap()))
         .unwrap();
@@ -95,5 +121,11 @@ async fn main(spawner: Spawner) {
         .spawn(draw_task(EVENTS.publisher().unwrap()))
         .unwrap();
 
-    App::new().run(&mut terminal).await.unwrap();
+    EVENTS
+        .publisher()
+        .unwrap()
+        .publish(app::Event::InitHat(app::StickHat::MiniJoyC))
+        .await;
+
+    app.run(&mut terminal).await.unwrap();
 }
