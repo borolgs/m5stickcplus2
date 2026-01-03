@@ -1,6 +1,7 @@
 use app::{
     App, Sender,
     events::{self, EVENTS, Receiver},
+    logger,
 };
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
@@ -24,7 +25,7 @@ async fn draw_task(sender: Sender) {
 async fn event_handler(mut receiver: Receiver) {
     loop {
         let event = receiver.next_message_pure().await;
-        if !matches!(event, app::Event::Draw) {
+        if !matches!(event, app::Event::Draw | app::Event::LogAdded) {
             info!("Message from app: {:?}", event);
         }
     }
@@ -32,10 +33,11 @@ async fn event_handler(mut receiver: Receiver) {
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Debug)
-        .format_timestamp_nanos()
-        .init();
+    // env_logger::builder()
+    //     .filter_level(log::LevelFilter::Debug)
+    //     .format_timestamp_nanos()
+    //     .init();
+    logger::init();
 
     let output_settings = OutputSettingsBuilder::new().scale(3).build();
     let mut window = Window::new(

@@ -8,7 +8,7 @@
 #![deny(clippy::large_stack_frames)]
 
 use alloc::boxed::Box;
-use app::{App, EVENTS, Event, Sender, Stats};
+use app::{App, EVENTS, Event, Sender, Stats, logger};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
@@ -72,6 +72,7 @@ async fn minijoyc_task(mut joyc: MiniJoyC) {
     joyc.run().await;
 }
 
+#[cfg(feature = "radio")]
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
         static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
@@ -87,13 +88,14 @@ macro_rules! mk_static {
 )]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    esp_println::logger::init_logger_from_env();
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 98768);
+    esp_alloc::heap_allocator!(size: 160000);
+
+    // esp_println::logger::init_logger_from_env();
+    logger::init();
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
-
-    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 98768);
-    esp_alloc::heap_allocator!(size: 160000);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
