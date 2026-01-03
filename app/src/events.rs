@@ -12,6 +12,7 @@ pub enum Event {
     ButtonUp(Button),
     Remote(Remote),
     JoyC(JoyC),
+    LogAdded,
 }
 
 #[derive(Debug, Clone, Copy)]

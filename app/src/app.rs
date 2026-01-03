@@ -5,13 +5,15 @@ use alloc::{
 };
 
 use embassy_time::Instant;
+use log::Level;
 use ratatui::{
     Frame, Terminal,
     buffer::Buffer,
     layout::{Constraint, Layout, Margin, Rect},
     prelude::{Backend, Widget},
     style::{Color, Style, Stylize},
-    widgets::{Block, Padding, Paragraph, Tabs},
+    text::Line,
+    widgets::{Block, Padding, Paragraph, Tabs, Wrap},
 };
 #[cfg(feature = "std")]
 use std::{string::String, vec::Vec};
@@ -22,6 +24,7 @@ use crate::{
     Stats, StickHat,
     events::{self, EVENTS, Event, Receiver, Sender},
     layout::AppLayout,
+    logger,
 };
 
 #[cfg(feature = "tv")]
@@ -41,7 +44,6 @@ pub struct App {
     #[cfg(feature = "tv")]
     tv: TVState,
     hat: Option<StickHat>,
-    debug: String,
 }
 
 impl App {
@@ -63,11 +65,11 @@ impl App {
             },
             stats: Stats::default(),
             hat: None,
-            debug: String::from(""),
         }
     }
 
     pub async fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<(), B::Error> {
+        log::info!("Application started");
         self.layout = AppLayout::new(terminal.get_frame().area());
 
         while !self.exit {
@@ -135,16 +137,7 @@ impl App {
             #[cfg(feature = "tv")]
             SelectedTab::Remote => self.draw_remote(main, buf),
             SelectedTab::Info => self.draw_info(main, buf),
-            SelectedTab::Dev => {
-                Paragraph::new(self.debug.clone())
-                    .block(Block::new().padding(Padding {
-                        left: 1,
-                        right: 0,
-                        top: 1,
-                        bottom: 0,
-                    }))
-                    .render(main, buf);
-            }
+            SelectedTab::Dev => self.draw_dev(main, buf),
         }
 
         self.draw_footer(footer, buf);
@@ -182,6 +175,29 @@ impl App {
     fn draw_remote(&self, area: Rect, buf: &mut Buffer) {
         use ratatui::prelude::StatefulWidget;
         TVRemote::new().render(area, buf, &mut self.tv.clone());
+    }
+
+    fn draw_dev(&self, area: Rect, buf: &mut Buffer) {
+        let log_lines = logger::latest_log_lines(area.height as usize);
+        let log_lines = log_lines
+            .iter()
+            .rev()
+            .map(|(level, msg)| {
+                let color = match level {
+                    Level::Error => Color::Red,
+                    Level::Warn => Color::Yellow,
+                    Level::Info => Color::White,
+                    Level::Debug => Color::Blue,
+                    Level::Trace => Color::Magenta,
+                };
+
+                Line::styled(msg, Style::new().fg(color))
+            })
+            .collect::<Vec<_>>();
+
+        Paragraph::new(log_lines)
+            .wrap(Wrap { trim: true })
+            .render(area, buf);
     }
 
     fn draw_info(&self, area: Rect, buf: &mut Buffer) {

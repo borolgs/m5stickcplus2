@@ -14,7 +14,7 @@ ir = ["app/tv"]
 radio = ["esp-radio"]
 
 [dependencies]
-app = { path = "../app" }
+app = { path = "../app", features = ["alloc"] }
 
 log = "0.4.27"
 
