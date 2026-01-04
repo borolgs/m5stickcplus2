@@ -35,7 +35,20 @@ use stick::button::Buttons;
 
 use stick::minijoyc::MiniJoyC;
 
+#[cfg(feature = "radio")]
+use stick::radio;
+
 extern crate alloc;
+
+#[allow(unused)]
+macro_rules! mk_static {
+    ($t:ty,$val:expr) => {{
+        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
+        #[deny(unused_attributes)]
+        let x = STATIC_CELL.uninit().write(($val));
+        x
+    }};
+}
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -72,16 +85,6 @@ async fn minijoyc_task(mut joyc: MiniJoyC) {
     joyc.run().await;
 }
 
-#[cfg(feature = "radio")]
-macro_rules! mk_static {
-    ($t:ty,$val:expr) => {{
-        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
-        #[deny(unused_attributes)]
-        let x = STATIC_CELL.uninit().write(($val));
-        x
-    }};
-}
-
 #[allow(
     clippy::large_stack_frames,
     reason = "it's not unusual to allocate larger buffers etc. in main"
@@ -89,7 +92,6 @@ macro_rules! mk_static {
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 98768);
-    esp_alloc::heap_allocator!(size: 160000);
 
     // esp_println::logger::init_logger_from_env();
     logger::init();
@@ -97,43 +99,71 @@ async fn main(spawner: Spawner) -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
+    esp_alloc::psram_allocator!(&peripherals.PSRAM, esp_hal::psram);
+
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
 
     #[cfg(feature = "radio")]
     {
-        use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
-        use esp_radio::{
-            Controller,
-            esp_now::{EspNowManager, EspNowSender},
-        };
+        use core::{net::Ipv4Addr, str::FromStr};
+        use embassy_net::StackResources;
+        use esp_hal::rng::Rng;
+        use esp_radio::Controller;
 
         let radio_controller = mk_static!(Controller<'static>, esp_radio::init().unwrap());
 
-        let wifi = peripherals.WIFI;
+        let gw_ip_addr_str = "192.168.2.1";
+
         let (mut controller, interfaces) =
-            esp_radio::wifi::new(radio_controller, wifi, Default::default()).unwrap();
+            esp_radio::wifi::new(radio_controller, peripherals.WIFI, Default::default()).unwrap();
 
-        controller.set_mode(esp_radio::wifi::WifiMode::Sta).unwrap();
+        controller.set_mode(esp_radio::wifi::WifiMode::Ap).unwrap();
         controller.start().unwrap();
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(100)).await;
 
-        let esp_now = interfaces.esp_now;
-        esp_now.set_channel(11).unwrap();
+        let device = interfaces.ap;
 
-        log::info!("esp-now version {}", esp_now.version().unwrap());
+        let gw_ip_addr = Ipv4Addr::from_str(gw_ip_addr_str).expect("failed to parse gateway ip");
 
-        let (manager, sender, receiver) = esp_now.split();
+        let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
+            address: embassy_net::Ipv4Cidr::new(gw_ip_addr, 24),
+            gateway: Some(gw_ip_addr),
+            dns_servers: Default::default(),
+        });
 
-        let manager = mk_static!(EspNowManager<'static>, manager);
-        let sender = mk_static!(
-            Mutex::<CriticalSectionRawMutex, EspNowSender<'static>>,
-            Mutex::<CriticalSectionRawMutex, _>::new(sender)
+        let rng = Rng::new();
+        let seed = (rng.random() as u64) << 32 | rng.random() as u64;
+
+        let (stack, runner) = embassy_net::new(
+            device,
+            config,
+            mk_static!(StackResources<3>, StackResources::<3>::new()),
+            seed,
         );
 
+        spawner.spawn(radio::connection(controller)).unwrap();
+        spawner.spawn(radio::net_task(runner)).unwrap();
         spawner
-            .spawn(stick::radio::listener(manager, receiver))
-            .ok();
-        spawner.spawn(stick::radio::broadcaster(sender)).ok();
+            .spawn(radio::run_dhcp(stack, gw_ip_addr_str))
+            .unwrap();
+        spawner.spawn(radio::handler(stack)).unwrap();
+
+        loop {
+            if stack.is_link_up() {
+                break;
+            }
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(500)).await;
+        }
+
+        log::info!("AP running, connect at http://{gw_ip_addr}:8080/");
+
+        while !stack.is_config_up() {
+            Timer::after(Duration::from_millis(100)).await
+        }
+        stack
+            .config_v4()
+            .inspect(|c| log::debug!("ipv4 config: {c:?}"));
     }
 
     let mut adc_config = AdcConfig::new();
