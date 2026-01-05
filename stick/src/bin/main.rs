@@ -35,9 +35,6 @@ use stick::button::Buttons;
 
 use stick::minijoyc::MiniJoyC;
 
-#[cfg(feature = "radio")]
-use stick::radio;
-
 extern crate alloc;
 
 #[allow(unused)]
@@ -104,12 +101,16 @@ async fn main(spawner: Spawner) -> ! {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
 
-    #[cfg(feature = "radio")]
+    #[cfg(feature = "server")]
     {
         use core::{net::Ipv4Addr, str::FromStr};
         use embassy_net::StackResources;
         use esp_hal::rng::Rng;
-        use esp_radio::Controller;
+        use esp_radio::{
+            Controller,
+            wifi::{AccessPointConfig, ModeConfig},
+        };
+        use stick::server;
 
         let radio_controller = mk_static!(Controller<'static>, esp_radio::init().unwrap());
 
@@ -119,7 +120,12 @@ async fn main(spawner: Spawner) -> ! {
             esp_radio::wifi::new(radio_controller, peripherals.WIFI, Default::default()).unwrap();
 
         controller.set_mode(esp_radio::wifi::WifiMode::Ap).unwrap();
-        controller.start().unwrap();
+        controller
+            .set_config(&ModeConfig::AccessPoint(
+                AccessPointConfig::default().with_ssid("stick".into()),
+            ))
+            .unwrap();
+        controller.start_async().await.unwrap();
         embassy_time::Timer::after(embassy_time::Duration::from_millis(100)).await;
 
         let device = interfaces.ap;
@@ -142,12 +148,12 @@ async fn main(spawner: Spawner) -> ! {
             seed,
         );
 
-        spawner.spawn(radio::connection(controller)).unwrap();
-        spawner.spawn(radio::net_task(runner)).unwrap();
+        spawner.spawn(server::connection(controller)).unwrap();
+        spawner.spawn(server::net_task(runner)).unwrap();
         spawner
-            .spawn(radio::run_dhcp(stack, gw_ip_addr_str))
+            .spawn(server::run_dhcp(stack, gw_ip_addr_str))
             .unwrap();
-        spawner.spawn(radio::handler(stack)).unwrap();
+        spawner.spawn(server::echo_server(stack)).unwrap();
 
         loop {
             if stack.is_link_up() {
@@ -156,14 +162,70 @@ async fn main(spawner: Spawner) -> ! {
             embassy_time::Timer::after(embassy_time::Duration::from_millis(500)).await;
         }
 
-        log::info!("AP running, connect at http://{gw_ip_addr}:8080/");
+        log::info!("AP running, UDP echo at {gw_ip_addr}:9000");
+    }
 
-        while !stack.is_config_up() {
-            Timer::after(Duration::from_millis(100)).await
+    #[cfg(feature = "client")]
+    {
+        use embassy_net::StackResources;
+        use esp_hal::rng::Rng;
+        use esp_radio::Controller;
+        use esp_radio::wifi::{AuthMethod, ClientConfig, ModeConfig};
+        use stick::client;
+
+        let radio_controller = mk_static!(Controller<'static>, esp_radio::init().unwrap());
+
+        let (mut controller, interfaces) =
+            esp_radio::wifi::new(radio_controller, peripherals.WIFI, Default::default()).unwrap();
+
+        controller.set_mode(esp_radio::wifi::WifiMode::Sta).unwrap();
+        let client_config = ModeConfig::Client(
+            ClientConfig::default()
+                .with_ssid("stick".into())
+                .with_auth_method(AuthMethod::None),
+        );
+        controller.set_config(&client_config).unwrap();
+        controller.start_async().await.unwrap();
+
+        log::info!("Connecting to AP 'stick'...");
+        loop {
+            match controller.connect_async().await {
+                Ok(_) => {
+                    log::info!("Connected to AP");
+                    break;
+                }
+                Err(e) => {
+                    log::warn!("Connection failed: {:?}, retrying...", e);
+                    Timer::after(Duration::from_secs(1)).await;
+                }
+            }
         }
-        stack
-            .config_v4()
-            .inspect(|c| log::debug!("ipv4 config: {c:?}"));
+
+        let device = interfaces.sta;
+
+        let config = embassy_net::Config::dhcpv4(Default::default());
+
+        let rng = Rng::new();
+        let seed = (rng.random() as u64) << 32 | rng.random() as u64;
+
+        let (stack, runner) = embassy_net::new(
+            device,
+            config,
+            mk_static!(StackResources<3>, StackResources::<3>::new()),
+            seed,
+        );
+
+        spawner.spawn(client::net_task(runner)).unwrap();
+        spawner.spawn(client::connection_task(controller)).unwrap();
+
+        loop {
+            if stack.is_link_up() {
+                break;
+            }
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(500)).await;
+        }
+
+        spawner.spawn(client::echo_client(stack)).unwrap();
     }
 
     let mut adc_config = AdcConfig::new();

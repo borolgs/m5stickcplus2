@@ -9,9 +9,10 @@ name = "stick"
 path = "./src/bin/main.rs"
 
 [features]
-default = ["ir", "radio"]
+default = []
 ir = ["app/tv"]
-radio = ["esp-radio", "embassy-net", "edge-nal", "edge-dhcp", "edge-nal-embassy"]
+server = ["esp-radio", "embassy-net", "edge-nal", "edge-dhcp", "edge-nal-embassy"]
+client = ["esp-radio", "embassy-net", "edge-nal", "edge-nal-embassy"]
 
 [dependencies]
 app = { path = "../app", features = ["alloc"] }

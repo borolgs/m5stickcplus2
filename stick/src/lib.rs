@@ -8,7 +8,10 @@ pub mod button;
 #[cfg(feature = "ir")]
 pub mod ir;
 
-#[cfg(feature = "radio")]
-pub mod radio;
+#[cfg(feature = "server")]
+pub mod server;
+
+#[cfg(feature = "client")]
+pub mod client;
 
 pub mod minijoyc;
