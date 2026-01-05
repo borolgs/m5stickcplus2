@@ -101,6 +101,45 @@ async fn main(spawner: Spawner) -> ! {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
 
+    #[cfg(feature = "now")]
+    {
+        use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
+        use esp_radio::{
+            Controller,
+            esp_now::{EspNowManager, EspNowSender},
+            wifi::WifiController,
+        };
+
+        let radio_controller = mk_static!(Controller<'static>, esp_radio::init().unwrap());
+
+        let wifi = peripherals.WIFI;
+        let (mut controller, interfaces) =
+            esp_radio::wifi::new(radio_controller, wifi, Default::default()).unwrap();
+
+        controller.set_mode(esp_radio::wifi::WifiMode::Sta).unwrap();
+        controller.start().unwrap();
+
+        // > Dropping the controller will deinitialize / stop Wi-Fi.
+        // !!!
+        mk_static!(WifiController<'static>, controller);
+
+        let esp_now = interfaces.esp_now;
+        esp_now.set_channel(11).unwrap();
+
+        log::info!("esp-now version {}", esp_now.version().unwrap());
+
+        let (manager, sender, receiver) = esp_now.split();
+
+        let manager = mk_static!(EspNowManager<'static>, manager);
+        let sender = mk_static!(
+            Mutex::<CriticalSectionRawMutex, EspNowSender<'static>>,
+            Mutex::<CriticalSectionRawMutex, _>::new(sender)
+        );
+
+        spawner.spawn(stick::now::listener(manager, receiver)).ok();
+        spawner.spawn(stick::now::broadcaster(sender)).ok();
+    }
+
     #[cfg(feature = "server")]
     {
         use core::{net::Ipv4Addr, str::FromStr};
