@@ -19,6 +19,7 @@ const I2C_ADDRESS_REG: u8 = 0xFF;
 pub struct MiniJoyC {
     i2c: I2c<'static, Async>,
     sender: Sender,
+    prev_position: (i8, i8),
     prev_direction: Option<JoyDirection>,
     prev_button: Option<bool>,
 }
@@ -36,6 +37,7 @@ impl MiniJoyC {
         Self {
             i2c,
             sender,
+            prev_position: (0, 0),
             prev_direction: None,
             prev_button: None,
         }
@@ -66,30 +68,27 @@ impl MiniJoyC {
             return;
         };
 
+        let x = (((x + if x >= 0 { 5 } else { -5 }) / 10) * 10).clamp(-100, 100);
+        let y = (((y + if y >= 0 { 5 } else { -5 }) / 10) * 10).clamp(-100, 100);
+
+        let pos = (x, y);
+        if pos != self.prev_position {
+            self.prev_position = pos;
+            log::debug!("pos: {} {}", x, y);
+            self.sender.publish(Event::JoyC(app::JoyC::Pos(pos))).await;
+        }
+
         let direction = Self::classify_direction(x, y, 35);
 
         if direction != self.prev_direction {
             let event = match direction {
-                Some(JoyDirection::Up) => Event::JoyC(app::JoyC::Pos {
-                    dir: app::JoycDirection::Up,
-                    val: (x, y),
-                }),
-                Some(JoyDirection::Down) => Event::JoyC(app::JoyC::Pos {
-                    dir: app::JoycDirection::Down,
-                    val: (x, y),
-                }),
-                Some(JoyDirection::Left) => Event::JoyC(app::JoyC::Pos {
-                    dir: app::JoycDirection::Left,
-                    val: (x, y),
-                }),
-                Some(JoyDirection::Right) => Event::JoyC(app::JoyC::Pos {
-                    dir: app::JoycDirection::Right,
-                    val: (x, y),
-                }),
-                None => Event::JoyC(app::JoyC::Pos {
-                    dir: app::JoycDirection::Center,
-                    val: (x, y),
-                }),
+                Some(JoyDirection::Up) => Event::JoyC(app::JoyC::Arrow(app::JoycDirection::Up)),
+                Some(JoyDirection::Down) => Event::JoyC(app::JoyC::Arrow(app::JoycDirection::Down)),
+                Some(JoyDirection::Left) => Event::JoyC(app::JoyC::Arrow(app::JoycDirection::Left)),
+                Some(JoyDirection::Right) => {
+                    Event::JoyC(app::JoyC::Arrow(app::JoycDirection::Right))
+                }
+                None => Event::JoyC(app::JoyC::Arrow(app::JoycDirection::Center)),
             };
             self.sender.publish(event).await;
 

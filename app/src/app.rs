@@ -76,6 +76,7 @@ impl App {
             terminal.draw(|frame| self.draw(frame))?;
 
             let msg = self.receiver.next_message_pure().await;
+
             self.handle_events(msg).await;
         }
 
@@ -134,6 +135,10 @@ impl App {
         self.draw_tabs(header, buf);
 
         match self.selected_tab {
+            #[cfg(feature = "controller")]
+            SelectedTab::Controller => self.draw_controller(main, buf),
+            #[cfg(feature = "vehicle")]
+            SelectedTab::Vehicle => self.draw_vehicle(main, buf),
             #[cfg(feature = "tv")]
             SelectedTab::Remote => self.draw_remote(main, buf),
             SelectedTab::Info => self.draw_info(main, buf),
@@ -177,6 +182,24 @@ impl App {
         TVRemote::new().render(area, buf, &mut self.tv.clone());
     }
 
+    #[cfg(feature = "controller")]
+    fn draw_controller(&self, area: Rect, buf: &mut Buffer) {
+        // TODO
+        Paragraph::new("Vehicle Controller")
+            .centered()
+            .block(Block::new().padding(Padding::top(1)))
+            .render(area, buf);
+    }
+
+    #[cfg(feature = "vehicle")]
+    fn draw_vehicle(&self, area: Rect, buf: &mut Buffer) {
+        // TODO
+        Paragraph::new("Vehicle")
+            .centered()
+            .block(Block::new().padding(Padding::top(1)))
+            .render(area, buf);
+    }
+
     fn draw_dev(&self, area: Rect, buf: &mut Buffer) {
         let log_lines = logger::latest_log_lines(area.height as usize);
         let log_lines = log_lines
@@ -187,7 +210,7 @@ impl App {
                     Level::Error => Color::Red,
                     Level::Warn => Color::Yellow,
                     Level::Info => Color::White,
-                    Level::Debug => Color::Blue,
+                    Level::Debug => Color::DarkGray,
                     Level::Trace => Color::Magenta,
                 };
 
@@ -300,6 +323,23 @@ impl App {
             Event::JoyC(joyc_event) => {
                 self.touch_tab();
                 match self.selected_tab {
+                    #[cfg(feature = "controller")]
+                    SelectedTab::Controller => match joyc_event {
+                        crate::JoyC::Pos((x, y)) => {
+                            use crate::Controller;
+
+                            let x = x as i16;
+                            let y = y as i16;
+
+                            let left = (y + x).clamp(-100, 100) as i8;
+                            let right = (y - x).clamp(-100, 100) as i8;
+
+                            self.sender
+                                .publish(Event::Controller(Controller::Move(left, right)))
+                                .await;
+                        }
+                        _ => {}
+                    },
                     #[cfg(feature = "tv")]
                     SelectedTab::Remote => match joyc_event {
                         crate::JoyC::Button => {
@@ -307,7 +347,7 @@ impl App {
                                 .publish(Event::Remote(self.tv.current_btn))
                                 .await
                         }
-                        crate::JoyC::Pos { dir, .. } => match dir {
+                        crate::JoyC::Arrow(dir) => match dir {
                             crate::JoycDirection::Up => {
                                 self.tv.prev_row();
                             }
@@ -322,6 +362,7 @@ impl App {
                             }
                             crate::JoycDirection::Center => {}
                         },
+                        _ => {}
                     },
                     _ => {}
                 };
@@ -393,13 +434,17 @@ impl App {
     Clone, Copy, PartialEq, strum::EnumIter, strum::EnumCount, strum::FromRepr, strum::Display,
 )]
 pub enum SelectedTab {
-    // Main,
-    // Telegram,
+    #[strum(to_string = "info")]
+    Info,
+    #[cfg(feature = "controller")]
+    #[strum(to_string = "ctrl")]
+    Controller,
+    #[cfg(feature = "vehicle")]
+    #[strum(to_string = "vehicle")]
+    Vehicle,
     #[cfg(feature = "tv")]
     #[strum(to_string = "tv")]
     Remote,
-    #[strum(to_string = "info")]
-    Info,
     #[strum(to_string = "dev")]
     Dev,
 }

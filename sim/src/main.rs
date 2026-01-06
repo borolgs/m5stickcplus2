@@ -68,22 +68,18 @@ async fn main(spawner: Spawner) {
                         }
 
                         if let Some(joyc_evt) = match keycode {
-                            sdl2::Keycode::DOWN => Some(events::JoyC::Pos {
-                                dir: events::JoycDirection::Down,
-                                val: (0, 0),
-                            }),
-                            sdl2::Keycode::Up => Some(events::JoyC::Pos {
-                                dir: events::JoycDirection::Up,
-                                val: (0, 0),
-                            }),
-                            sdl2::Keycode::LEFT => Some(events::JoyC::Pos {
-                                dir: events::JoycDirection::Left,
-                                val: (0, 0),
-                            }),
-                            sdl2::Keycode::RIGHT => Some(events::JoyC::Pos {
-                                dir: events::JoycDirection::Right,
-                                val: (0, 0),
-                            }),
+                            sdl2::Keycode::DOWN => {
+                                Some(events::JoyC::Arrow(events::JoycDirection::Down))
+                            }
+                            sdl2::Keycode::Up => {
+                                Some(events::JoyC::Arrow(events::JoycDirection::Up))
+                            }
+                            sdl2::Keycode::LEFT => {
+                                Some(events::JoyC::Arrow(events::JoycDirection::Left))
+                            }
+                            sdl2::Keycode::RIGHT => {
+                                Some(events::JoyC::Arrow(events::JoycDirection::Right))
+                            }
                             sdl2::Keycode::SPACE => Some(events::JoyC::Button),
                             _ => None,
                         } {

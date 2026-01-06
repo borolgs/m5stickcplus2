@@ -136,8 +136,19 @@ async fn main(spawner: Spawner) -> ! {
             Mutex::<CriticalSectionRawMutex, _>::new(sender)
         );
 
-        spawner.spawn(stick::now::listener(manager, receiver)).ok();
-        spawner.spawn(stick::now::broadcaster(sender)).ok();
+        spawner
+            .spawn(stick::now::listener(
+                EVENTS.publisher().unwrap(),
+                manager,
+                receiver,
+            ))
+            .ok();
+        spawner
+            .spawn(stick::now::broadcaster(
+                EVENTS.subscriber().unwrap(),
+                sender,
+            ))
+            .ok();
     }
 
     #[cfg(feature = "server")]
@@ -335,23 +346,53 @@ async fn main(spawner: Spawner) -> ! {
 
     spawner.spawn(buttons_task(buttons)).unwrap();
 
-    let i2c = I2c::new(
-        peripherals.I2C0,
-        esp_hal::i2c::master::Config::default()
-            .with_frequency(Rate::from_khz(100))
-            .with_software_timeout(esp_hal::i2c::master::SoftwareTimeout::PerByte(
-                esp_hal::time::Duration::from_millis(10),
-            )),
-    )
-    .unwrap()
-    .with_sda(peripherals.GPIO0)
-    .with_scl(peripherals.GPIO26)
-    .into_async();
+    #[cfg(not(feature = "vehicle"))]
+    {
+        let i2c = I2c::new(
+            peripherals.I2C0,
+            esp_hal::i2c::master::Config::default()
+                .with_frequency(Rate::from_khz(100))
+                .with_software_timeout(esp_hal::i2c::master::SoftwareTimeout::PerByte(
+                    esp_hal::time::Duration::from_millis(10),
+                )),
+        )
+        .unwrap()
+        .with_sda(peripherals.GPIO0)
+        .with_scl(peripherals.GPIO26)
+        .into_async();
 
-    let mut joyc = MiniJoyC::new(i2c, EVENTS.publisher().unwrap());
+        let mut joyc = MiniJoyC::new(i2c, EVENTS.publisher().unwrap());
 
-    if joyc.is_connected().await {
-        spawner.spawn(minijoyc_task(joyc)).unwrap();
+        if joyc.is_connected().await {
+            spawner.spawn(minijoyc_task(joyc)).unwrap();
+        }
+    }
+
+    #[cfg(feature = "vehicle")]
+    {
+        use stick::vehicle::{Hat8Servos, vehicle_task};
+
+        let i2c = I2c::new(
+            peripherals.I2C0,
+            esp_hal::i2c::master::Config::default()
+                .with_frequency(Rate::from_khz(100))
+                .with_software_timeout(esp_hal::i2c::master::SoftwareTimeout::PerByte(
+                    esp_hal::time::Duration::from_millis(10),
+                )),
+        )
+        .unwrap()
+        .with_sda(peripherals.GPIO0)
+        .with_scl(peripherals.GPIO26)
+        .into_async();
+
+        let mut servos = Hat8Servos::new(i2c);
+
+        if servos.is_connected().await {
+            log::info!("Hat 8Servos v1.1 connected");
+            spawner
+                .spawn(vehicle_task(EVENTS.subscriber().unwrap(), servos))
+                .unwrap();
+        }
     }
 
     #[cfg(feature = "ir")]

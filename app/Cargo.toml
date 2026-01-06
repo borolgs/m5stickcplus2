@@ -9,9 +9,13 @@ default = []
 std = []
 alloc = ["esp-println"]
 tv = []
+controller = []
+vehicle = []
 
 [dependencies]
 log = "0.4.27"
+
+serde = { version = "1.0.228", default-features = false, features = ["derive"] }
 
 strum = { version = "0.26", default-features = false, features = ["derive"] }
 

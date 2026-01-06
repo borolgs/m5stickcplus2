@@ -2,6 +2,7 @@ use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
     pubsub::{PubSubChannel, Publisher, Subscriber},
 };
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -13,6 +14,8 @@ pub enum Event {
     Remote(Remote),
     JoyC(JoyC),
     LogAdded,
+    Controller(Controller),
+    Vehicle(Vehicle),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -34,10 +37,21 @@ pub enum Button {
     C,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum JoyC {
     Button,
-    Pos { dir: JoycDirection, val: (i8, i8) },
+    Arrow(JoycDirection),
+    Pos((i8, i8)),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum Controller {
+    Move(i8, i8),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum Vehicle {
+    Move(i8, i8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

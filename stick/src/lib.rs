@@ -17,4 +17,7 @@ pub mod client;
 #[cfg(feature = "now")]
 pub mod now;
 
+#[cfg(feature = "vehicle")]
+pub mod vehicle;
+
 pub mod minijoyc;

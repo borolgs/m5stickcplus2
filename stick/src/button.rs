@@ -1,5 +1,5 @@
 use esp_hal::gpio::Input;
-use log::debug;
+use log::trace;
 
 use app::events::{self, Event, Sender};
 
@@ -25,42 +25,42 @@ impl Buttons {
         self.c.update();
 
         if self.a.just_pressed() {
-            debug!("Button A pressed");
+            trace!("Button A pressed");
             self.sender
                 .publish(Event::ButtonDown(events::Button::A))
                 .await;
         }
 
         if self.a.just_released() {
-            debug!("Button A released");
+            trace!("Button A released");
             self.sender
                 .publish(Event::ButtonUp(events::Button::A))
                 .await;
         }
 
         if self.b.just_pressed() {
-            debug!("Button B pressed");
+            trace!("Button B pressed");
             self.sender
                 .publish(Event::ButtonDown(events::Button::B))
                 .await;
         }
 
         if self.b.just_released() {
-            debug!("Button B released");
+            trace!("Button B released");
             self.sender
                 .publish(Event::ButtonUp(events::Button::B))
                 .await;
         }
 
         if self.c.just_pressed() {
-            debug!("Button C pressed");
+            trace!("Button C pressed");
             self.sender
                 .publish(Event::ButtonDown(events::Button::C))
                 .await;
         }
 
         if self.c.just_released() {
-            debug!("Button C released");
+            trace!("Button C released");
             self.sender
                 .publish(Event::ButtonUp(events::Button::C))
                 .await;

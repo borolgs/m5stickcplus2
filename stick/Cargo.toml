@@ -11,14 +11,21 @@ path = "./src/bin/main.rs"
 [features]
 default = []
 ir = ["app/tv"]
-server = ["esp-radio", "embassy-net", "edge-nal", "edge-dhcp", "edge-nal-embassy"]
+
+now = ["esp-radio", "serde", "postcard"]
+controller = ["app/controller"]
+vehicle = ["app/vehicle"]
+
 client = ["esp-radio", "embassy-net", "edge-nal", "edge-nal-embassy"]
-now = ["esp-radio"]
+server = ["esp-radio", "embassy-net", "edge-nal", "edge-dhcp", "edge-nal-embassy"]
 
 [dependencies]
 app = { path = "../app", features = ["alloc"] }
 
 log = "0.4.27"
+
+serde = { version = "1.0.228", optional = true, default-features = false }
+postcard = { version = "1.1.3", optional = true }
 
 esp-hal = { version = "~1.0", features = ["esp32", "log-04", "unstable", "psram"] }
 esp-rtos = { version = "0.2.0", features = ["embassy", "esp-alloc", "esp32", "esp-radio" ] }
