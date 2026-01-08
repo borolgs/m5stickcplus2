@@ -20,4 +20,7 @@ pub mod now;
 #[cfg(feature = "vehicle")]
 pub mod vehicle;
 
+#[cfg(feature = "camera")]
+pub mod camera;
+
 pub mod minijoyc;

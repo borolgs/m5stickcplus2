@@ -395,6 +395,17 @@ async fn main(spawner: Spawner) -> ! {
         }
     }
 
+    #[cfg(feature = "camera")]
+    {
+        use stick::camera::Camera;
+
+        let mut camera = Camera::new(peripherals.UART1, peripherals.GPIO33);
+
+        if camera.detect().await {
+            log::info!("Camera ready");
+        }
+    }
+
     #[cfg(feature = "ir")]
     {
         use esp_hal::rmt::{Rmt, TxChannelCreator};
