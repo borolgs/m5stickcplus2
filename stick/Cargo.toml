@@ -15,6 +15,7 @@ ir = ["app/tv"]
 now = ["esp-radio", "serde", "postcard"]
 controller = ["app/controller"]
 vehicle = ["app/vehicle"]
+camera = []
 
 client = ["esp-radio", "embassy-net", "edge-nal", "edge-nal-embassy"]
 server = ["esp-radio", "embassy-net", "edge-nal", "edge-dhcp", "edge-nal-embassy"]
