@@ -11,6 +11,7 @@ use alloc::boxed::Box;
 use app::{App, EVENTS, Event, Sender, Stats, logger};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
+use embedded_graphics::primitives;
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_alloc::HEAP;
@@ -25,6 +26,7 @@ use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::{clock::CpuClock, delay::Delay};
 
+use mipidsi::Display;
 use mipidsi::interface::SpiInterface;
 use mipidsi::options::{ColorInversion, Orientation, Rotation};
 use mousefood::EmbeddedBackend;
@@ -36,6 +38,20 @@ use stick::button::Buttons;
 use stick::minijoyc::MiniJoyC;
 
 extern crate alloc;
+
+pub type M5Display<'a> = mipidsi::Display<
+    SpiInterface<
+        'a,
+        embedded_hal_bus::spi::ExclusiveDevice<
+            Spi<'a, Blocking>,
+            Output<'a>,
+            embedded_hal_bus::spi::NoDelay,
+        >,
+        Output<'a>,
+    >,
+    mipidsi::models::ST7789,
+    Output<'a>,
+>;
 
 #[allow(unused)]
 macro_rules! mk_static {
@@ -326,14 +342,7 @@ async fn main(spawner: Spawner) -> ! {
         display
     };
 
-    let backend = EmbeddedBackend::new(
-        &mut display,
-        EmbeddedBackendConfig {
-            ..Default::default()
-        },
-    );
-
-    let mut terminal = Terminal::new(backend).unwrap();
+    // let mut display = mk_static!(M5Display<'static>, display);
 
     let buttons = Buttons::new(
         EVENTS.publisher().unwrap(),
@@ -397,12 +406,44 @@ async fn main(spawner: Spawner) -> ! {
 
     #[cfg(feature = "camera")]
     {
-        use stick::camera::Camera;
+        use embedded_graphics::image::{Image, ImageRawBE};
+        use embedded_graphics::prelude::Point;
+        use stick::camera::{Camera, FrameSize};
 
-        let mut camera = Camera::new(peripherals.UART1, peripherals.GPIO33);
+        let mut camera = Camera::new(peripherals.UART1, peripherals.GPIO33, peripherals.GPIO32);
+
+        let _backlight = Output::new(peripherals.GPIO27, Level::High, output_config);
+
+        if camera.set_framesize(FrameSize::Qqvga).await.is_ok() {
+            log::info!("Set framesize to QQVGA (160x120)");
+        }
+
+        embassy_time::Timer::after_millis(100).await;
 
         if camera.detect().await {
-            log::info!("Camera ready");
+            log::info!("Camera streaming...");
+
+            let mut frames = 0u32;
+            let start = embassy_time::Instant::now();
+            loop {
+                match camera.read_image().await {
+                    Ok(img) => {
+                        let raw_data = img.to_rgb565_raw();
+                        let raw_image: ImageRawBE<Rgb565> =
+                            ImageRawBE::new(&raw_data, img.width as u32);
+                        let image = Image::new(&raw_image, Point::zero());
+                        image.draw(&mut display).ok();
+
+                        frames += 1;
+                        if frames % 10 == 0 {
+                            let elapsed = start.elapsed().as_millis();
+                            let fps = frames as u64 * 1000 / elapsed;
+                            log::info!("{} frames, {} fps", frames, fps);
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
         }
     }
 
@@ -425,9 +466,23 @@ async fn main(spawner: Spawner) -> ! {
             .unwrap();
     }
 
-    let _backlight = Output::new(peripherals.GPIO27, Level::High, output_config);
+    // let _backlight = Output::new(peripherals.GPIO27, Level::High, output_config);
 
-    app.run(&mut terminal).await.unwrap();
+    // let backend = EmbeddedBackend::new(
+    //     &mut display,
+    //     EmbeddedBackendConfig {
+    //         flush_callback: Box::new(move |display| {
+    //             _ = primitives::Circle::new(embedded_graphics::prelude::Point::new(10, 20), 30)
+    //                 .into_styled(primitives::PrimitiveStyle::with_stroke(Rgb565::WHITE, 1))
+    //                 .draw(display);
+    //         }),
+    //         ..Default::default()
+    //     },
+    // );
+
+    // let mut terminal = Terminal::new(backend).unwrap();
+
+    // app.run(&mut terminal).await.unwrap();
 
     loop {}
 }

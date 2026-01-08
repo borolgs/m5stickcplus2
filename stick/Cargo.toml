@@ -9,13 +9,13 @@ name = "stick"
 path = "./src/bin/main.rs"
 
 [features]
-default = []
+default = ["camera"]
 ir = ["app/tv"]
 
 now = ["esp-radio", "serde", "postcard"]
 controller = ["app/controller"]
 vehicle = ["app/vehicle"]
-camera = []
+camera = ["zune-jpeg"]
 
 client = ["esp-radio", "embassy-net", "edge-nal", "edge-nal-embassy"]
 server = ["esp-radio", "embassy-net", "edge-nal", "edge-dhcp", "edge-nal-embassy"]
@@ -76,3 +76,5 @@ ratatui = { version = "0.30.0-beta.0", default-features = false }
 # > The latest version on crates.io - v2.1 uses std, but the version on main branch is already no_std
 mousefood = { git = "https://github.com/j-g00da/mousefood", rev = "c8d5e4a5af50bdab623f13656494c17e92dbf688" }
 nb = "1.1.0"
+
+zune-jpeg = { version = "0.4", optional = true, default-features = false }
