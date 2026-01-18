@@ -1,192 +1,277 @@
-use alloc::vec::Vec;
-use esp_hal::peripherals::UART1;
-use esp_hal::uart::{Config, Uart, UartRx, UartTx};
-use esp_hal::Async;
+use core::cell::RefCell;
+
+use app::{Event, Sender};
+use embassy_sync::{
+    blocking_mutex::{Mutex, raw::CriticalSectionRawMutex},
+    channel::Channel,
+};
+use embedded_graphics::{
+    Drawable,
+    image::{Image, ImageRawBE},
+    prelude::Point,
+};
+use mousefood::prelude::Rgb565;
 use zune_jpeg::JpegDecoder;
 
-const HEADER: [u8; 2] = [0xAA, 0x55];
-const BAUD_RATE: u32 = 1_500_000;
+pub const MAX_CHUNK_DATA: usize = 241;
+pub const MAX_FRAME_SIZE: usize = 12 * 1024; // 12KB for 160x120
+pub const MAX_CHUNKS: usize = 64;
 
-const CMD_FRAMESIZE: u8 = 0x01;
+pub const FRAME_WIDTH: usize = 160;
+pub const FRAME_HEIGHT: usize = 120;
+pub const RGB565_BUF_SIZE: usize = FRAME_WIDTH * FRAME_HEIGHT * 2;
 
-#[repr(u8)]
-#[derive(Clone, Copy)]
-pub enum FrameSize {
-    Qqvga = 1,   // 160x120
-    Hqvga = 4,   // 240x176
-    Qvga = 6,    // 320x240
-    Vga = 10,    // 640x480
+#[derive(Clone)]
+pub struct FrameChunk {
+    pub frame_id: u16,
+    pub chunk_idx: u16,
+    pub total_chunks: u16,
+    pub len: usize,
+    pub data: [u8; MAX_CHUNK_DATA],
 }
 
-pub struct Frame {
-    pub cmd: u8,
-    pub data: Vec<u8>,
-}
-
-pub struct Image {
-    pub width: usize,
-    pub height: usize,
-    pub rgb: Vec<u8>,
-}
-
-pub struct Camera<'d> {
-    rx: UartRx<'d, Async>,
-    tx: UartTx<'d, Async>,
-}
-
-impl<'d> Camera<'d> {
-    pub fn new(
-        uart: UART1<'d>,
-        rx_pin: impl esp_hal::gpio::InputPin + 'd,
-        tx_pin: impl esp_hal::gpio::OutputPin + 'd,
-    ) -> Self {
-        let config = Config::default().with_baudrate(BAUD_RATE);
-        let uart = Uart::new(uart, config)
-            .unwrap()
-            .with_rx(rx_pin)
-            .with_tx(tx_pin)
-            .into_async();
-        let (rx, tx) = uart.split();
-        Self { rx, tx }
+impl FrameChunk {
+    pub fn data(&self) -> &[u8] {
+        &self.data[..self.len]
     }
+}
 
-    fn build_frame(cmd: u8, data: &[u8]) -> Vec<u8> {
-        let payload_len = (data.len() + 2) as u32; // +2 for cmd and crc
-        let mut frame = Vec::with_capacity(8 + data.len() + 1);
+pub static FRAME_CHUNKS: Channel<CriticalSectionRawMutex, FrameChunk, 32> = Channel::new();
 
-        frame.push(HEADER[0]);
-        frame.push(HEADER[1]);
+pub struct FrameBuffer {
+    pub data: [u8; MAX_FRAME_SIZE],
+    pub len: usize,
+    pub ready_frame_id: u16,
+    assembling_frame_id: u16,
+    total_chunks: u16,
+    received_mask: u64,
+}
 
-        let len_bytes = payload_len.to_be_bytes();
-        frame.extend_from_slice(&len_bytes);
-
-        let len_crc = len_bytes[0] ^ len_bytes[1] ^ len_bytes[2] ^ len_bytes[3];
-        frame.push(len_crc);
-
-        frame.push(cmd);
-        frame.extend_from_slice(data);
-
-        let frame_crc = frame.iter().fold(0u8, |acc, &b| acc ^ b);
-        frame.push(frame_crc);
-
-        frame
-    }
-
-    pub async fn set_framesize(&mut self, size: FrameSize) -> Result<(), ()> {
-        let value = size as u16;
-        let data = value.to_le_bytes();
-        let frame = Self::build_frame(CMD_FRAMESIZE, &data);
-
-        self.tx.write_async(&frame).await.map_err(|_| ())?;
-        log::info!("Sent framesize command: {:?}", size as u8);
-        Ok(())
-    }
-
-    async fn read_header(&mut self) -> Result<(u32, u8), ()> {
-        let mut buf = [0u8; 7];
-
-        loop {
-            if self.rx.read_async(&mut buf[0..1]).await.is_err() {
-                continue;
-            }
-            if buf[0] != HEADER[0] {
-                continue;
-            }
-
-            if self.rx.read_async(&mut buf[1..2]).await.is_err() {
-                continue;
-            }
-            if buf[1] != HEADER[1] {
-                continue;
-            }
-
-            if self.rx.read_async(&mut buf[2..7]).await.is_err() {
-                continue;
-            }
-
-            let len = ((buf[2] as u32) << 24)
-                | ((buf[3] as u32) << 16)
-                | ((buf[4] as u32) << 8)
-                | (buf[5] as u32);
-
-            let len_crc = buf[2] ^ buf[3] ^ buf[4] ^ buf[5];
-            if len_crc != buf[6] {
-                continue;
-            }
-
-            let mut cmd = [0u8; 1];
-            if self.rx.read_async(&mut cmd).await.is_err() {
-                continue;
-            }
-
-            return Ok((len, cmd[0]));
+impl FrameBuffer {
+    const fn new() -> Self {
+        Self {
+            data: [0u8; MAX_FRAME_SIZE],
+            len: 0,
+            ready_frame_id: 0,
+            assembling_frame_id: 0,
+            total_chunks: 0,
+            received_mask: 0,
         }
     }
 
-    pub async fn read_frame(&mut self) -> Result<Frame, ()> {
-        let (len, cmd) = self.read_header().await?;
-        if len < 2 {
-            return Err(());
+    pub fn add_chunk(&mut self, chunk: &FrameChunk) -> bool {
+        if chunk.total_chunks as usize > MAX_CHUNKS {
+            return false;
         }
 
-        let data_len = len as usize - 2;
-        let mut data = alloc::vec![0u8; data_len];
-
-        let mut offset = 0;
-        while offset < data_len {
-            match self.rx.read_async(&mut data[offset..]).await {
-                Ok(n) => offset += n,
-                Err(_) => return Err(()),
-            }
+        if chunk.frame_id != self.assembling_frame_id {
+            self.assembling_frame_id = chunk.frame_id;
+            self.total_chunks = chunk.total_chunks;
+            self.received_mask = 0;
         }
 
-        let mut _crc = [0u8; 1];
-        let _ = self.rx.read_async(&mut _crc).await;
+        if chunk.chunk_idx >= chunk.total_chunks {
+            return false;
+        }
 
-        Ok(Frame { cmd, data })
+        let mask = 1u64 << chunk.chunk_idx;
+        if self.received_mask & mask != 0 {
+            return false;
+        }
+
+        let offset = chunk.chunk_idx as usize * MAX_CHUNK_DATA;
+        let end = (offset + chunk.len).min(MAX_FRAME_SIZE);
+        if offset < MAX_FRAME_SIZE {
+            let copy_len = end - offset;
+            self.data[offset..end].copy_from_slice(&chunk.data[..copy_len]);
+        }
+
+        self.received_mask |= mask;
+
+        let expected_mask = (1u64 << self.total_chunks) - 1;
+        if self.received_mask == expected_mask {
+            self.len = (self.total_chunks as usize - 1) * MAX_CHUNK_DATA + chunk.len;
+            self.ready_frame_id = self.assembling_frame_id;
+            return true;
+        }
+
+        false
     }
+}
 
-    pub async fn read_image(&mut self) -> Result<Image, ()> {
-        let frame = self.read_frame().await?;
-        decode_jpeg(&frame.data)
-    }
+pub static FRAME: Mutex<CriticalSectionRawMutex, RefCell<FrameBuffer>> =
+    Mutex::new(RefCell::new(FrameBuffer::new()));
 
-    pub async fn detect(&mut self) -> bool {
-        match self.read_frame().await {
-            Ok(frame) => {
-                log::info!("Camera detected, {} bytes", frame.data.len());
-                true
-            }
-            Err(_) => {
-                log::warn!("Camera not detected");
-                false
-            }
+pub struct DecodedFrame {
+    pub data: [u8; RGB565_BUF_SIZE],
+    pub width: u16,
+    pub height: u16,
+    pub ready: bool,
+    pub frame_id: u16,
+}
+
+impl DecodedFrame {
+    const fn new() -> Self {
+        Self {
+            data: [0u8; RGB565_BUF_SIZE],
+            width: 0,
+            height: 0,
+            ready: false,
+            frame_id: 0,
         }
     }
 }
 
-pub fn decode_jpeg(data: &[u8]) -> Result<Image, ()> {
-    let mut decoder = JpegDecoder::new(data);
-    decoder.decode_headers().map_err(|_| ())?;
-    let (width, height) = decoder.dimensions().ok_or(())?;
-    let rgb = decoder.decode().map_err(|_| ())?;
-    Ok(Image { width, height, rgb })
-}
+pub static DECODED: Mutex<CriticalSectionRawMutex, RefCell<DecodedFrame>> =
+    Mutex::new(RefCell::new(DecodedFrame::new()));
 
-impl Image {
-    pub fn to_rgb565_raw(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.width * self.height * 2);
+fn decode_frame_to_rgb565(jpeg_data: &[u8], frame_id: u16) -> bool {
+    let mut decoder = JpegDecoder::new(jpeg_data);
+    if decoder.decode_headers().is_err() {
+        return false;
+    }
+    let Some((width, height)) = decoder.dimensions() else {
+        return false;
+    };
+    let Ok(rgb) = decoder.decode() else {
+        return false;
+    };
 
-        for i in 0..(self.width * self.height) {
+    DECODED.lock(|d| {
+        let mut d = d.borrow_mut();
+        let pixel_count = width * height;
+
+        if pixel_count * 2 > RGB565_BUF_SIZE {
+            return;
+        }
+
+        for i in 0..pixel_count {
             let idx = i * 3;
-            let r = self.rgb[idx] as u16;
-            let g = self.rgb[idx + 1] as u16;
-            let b = self.rgb[idx + 2] as u16;
+            let r = rgb[idx] as u16;
+            let g = rgb[idx + 1] as u16;
+            let b = rgb[idx + 2] as u16;
 
             let raw = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
-            out.extend_from_slice(&raw.to_be_bytes());
+            let bytes = raw.to_be_bytes();
+            d.data[i * 2] = bytes[0];
+            d.data[i * 2 + 1] = bytes[1];
         }
 
-        out
+        d.width = width as u16;
+        d.height = height as u16;
+        d.frame_id = frame_id;
+        d.ready = true;
+    });
+
+    true
+}
+
+#[embassy_executor::task]
+pub async fn frame_assembler(sender: Sender) {
+    log::info!("frame_assembler started");
+
+    loop {
+        let chunk = FRAME_CHUNKS.receive().await;
+
+        let decoded = FRAME.lock(|f| {
+            let mut f = f.borrow_mut();
+            if f.add_chunk(&chunk) {
+                decode_frame_to_rgb565(&f.data[..f.len], f.ready_frame_id)
+            } else {
+                false
+            }
+        });
+
+        if decoded {
+            sender.publish_immediate(Event::Draw);
+        }
+    }
+}
+
+pub fn draw_decoded(buf: &mut mousefood::framebuffer::HeapBuffer<Rgb565>) {
+    static LAST_DRAWN: Mutex<CriticalSectionRawMutex, RefCell<u16>> = Mutex::new(RefCell::new(0));
+
+    DECODED.lock(|d| {
+        let d = d.borrow();
+        if !d.ready || d.width == 0 || d.height == 0 {
+            return;
+        }
+
+        let already_drawn = LAST_DRAWN.lock(|last| {
+            let mut last = last.borrow_mut();
+            if *last == d.frame_id {
+                return true;
+            }
+            *last = d.frame_id;
+            false
+        });
+
+        if already_drawn {
+            return;
+        }
+
+        let pixel_count = d.width as usize * d.height as usize;
+        let byte_count = pixel_count * 2;
+
+        let raw_image: ImageRawBE<Rgb565> = ImageRawBE::new(&d.data[..byte_count], d.width as u32);
+        let image = Image::new(&raw_image, Point::new(0, 10));
+        let _ = image.draw(buf);
+    });
+}
+
+#[allow(dead_code)]
+pub mod protocol {
+    pub const PREFIX: [u8; 2] = [0xCA, 0x3E];
+
+    pub const MSG_CAMERA_READY: u8 = 0x01;
+    pub const MSG_CONNECT: u8 = 0x02;
+    pub const MSG_FRAME_CHUNK: u8 = 0x03;
+    pub const MSG_DISCONNECT: u8 = 0x04;
+
+    // header: magic(2) + msg_type(1) + frame_id(2) + chunk_idx(2) + total_chunks(2) = 9 bytes
+    pub const CHUNK_HEADER_SIZE: usize = 9;
+    pub const CHUNK_DATA_SIZE: usize = 250 - CHUNK_HEADER_SIZE; // 241 bytes
+
+    #[derive(Debug)]
+    pub enum Message<'a> {
+        CameraReady,
+        Connect,
+        FrameChunk {
+            frame_id: u16,
+            chunk_idx: u16,
+            total_chunks: u16,
+            data: &'a [u8],
+        },
+    }
+
+    pub fn decode(data: &[u8]) -> Option<Message<'_>> {
+        if data.len() < 3 || data[0..2] != PREFIX {
+            return None;
+        }
+        let msg_type = data[2];
+        match msg_type {
+            MSG_CAMERA_READY => Some(Message::CameraReady),
+            MSG_FRAME_CHUNK if data.len() >= CHUNK_HEADER_SIZE => {
+                let frame_id = u16::from_le_bytes([data[3], data[4]]);
+                let chunk_idx = u16::from_le_bytes([data[5], data[6]]);
+                let total_chunks = u16::from_le_bytes([data[7], data[8]]);
+                let payload = &data[CHUNK_HEADER_SIZE..];
+                Some(Message::FrameChunk {
+                    frame_id,
+                    chunk_idx,
+                    total_chunks,
+                    data: payload,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    pub fn encode_connect() -> [u8; 3] {
+        [PREFIX[0], PREFIX[1], MSG_CONNECT]
+    }
+
+    pub fn encode_disconnect() -> [u8; 3] {
+        [PREFIX[0], PREFIX[1], MSG_DISCONNECT]
     }
 }

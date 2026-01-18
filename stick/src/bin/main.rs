@@ -7,51 +7,31 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
-use alloc::boxed::Box;
 use app::{App, EVENTS, Event, Sender, Stats, logger};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
-use embedded_graphics::primitives;
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
-use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_alloc::HEAP;
 use esp_backtrace as _;
 use esp_hal::Blocking;
 use esp_hal::analog::adc::{Adc, AdcConfig, AdcPin, Attenuation};
+use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::I2c;
 use esp_hal::peripherals::{ADC1, GPIO38};
-use esp_hal::spi::master::{Config, Spi};
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
-use esp_hal::{clock::CpuClock, delay::Delay};
 
-use mipidsi::Display;
-use mipidsi::interface::SpiInterface;
-use mipidsi::options::{ColorInversion, Orientation, Rotation};
 use mousefood::EmbeddedBackend;
 use mousefood::EmbeddedBackendConfig;
 use ratatui::Terminal;
 use stick::battery::get_battery_level;
 use stick::button::Buttons;
 
+use stick::display::stick_display;
 use stick::minijoyc::MiniJoyC;
 
 extern crate alloc;
-
-pub type M5Display<'a> = mipidsi::Display<
-    SpiInterface<
-        'a,
-        embedded_hal_bus::spi::ExclusiveDevice<
-            Spi<'a, Blocking>,
-            Output<'a>,
-            embedded_hal_bus::spi::NoDelay,
-        >,
-        Output<'a>,
-    >,
-    mipidsi::models::ST7789,
-    Output<'a>,
->;
 
 #[allow(unused)]
 macro_rules! mk_static {
@@ -106,8 +86,11 @@ async fn minijoyc_task(mut joyc: MiniJoyC) {
 async fn main(spawner: Spawner) -> ! {
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 98768);
 
-    // esp_println::logger::init_logger_from_env();
-    logger::init();
+    if cfg!(feature = "debug") {
+        logger::init();
+    } else {
+        esp_println::logger::init_logger_from_env();
+    }
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
@@ -160,10 +143,7 @@ async fn main(spawner: Spawner) -> ! {
             ))
             .ok();
         spawner
-            .spawn(stick::now::broadcaster(
-                EVENTS.subscriber().unwrap(),
-                sender,
-            ))
+            .spawn(stick::now::sender(EVENTS.subscriber().unwrap(), sender))
             .ok();
     }
 
@@ -306,43 +286,15 @@ async fn main(spawner: Spawner) -> ! {
 
     let _power = Output::new(peripherals.GPIO4, Level::High, output_config);
 
-    let mut display = {
-        let mut delay = Delay::new();
-
-        let dc = Output::new(peripherals.GPIO14, Level::Low, output_config);
-
-        let mut rst = Output::new(peripherals.GPIO12, Level::Low, output_config);
-        rst.set_high();
-
-        let spi = Spi::new(
-            peripherals.SPI2,
-            Config::default().with_frequency(Rate::from_mhz(40)),
-        )
-        .unwrap()
-        .with_sck(peripherals.GPIO13)
-        .with_mosi(peripherals.GPIO15);
-
-        let cs_output = Output::new(peripherals.GPIO5, Level::High, output_config);
-        let spi_device = ExclusiveDevice::new_no_delay(spi, cs_output).unwrap();
-
-        let buffer = Box::leak(Box::new([0_u8; 512]));
-        let di = SpiInterface::new(spi_device, dc, buffer);
-
-        let mut display = mipidsi::Builder::new(mipidsi::models::ST7789, di)
-            .display_size(135, 240)
-            .display_offset(52, 40)
-            .invert_colors(ColorInversion::Inverted)
-            .orientation(Orientation::new().rotate(Rotation::Deg270))
-            .reset_pin(rst)
-            .init(&mut delay)
-            .unwrap();
-
-        display.clear(Rgb565::BLACK).unwrap();
-
-        display
-    };
-
-    // let mut display = mk_static!(M5Display<'static>, display);
+    let mut display = stick_display(
+        peripherals.GPIO14,
+        peripherals.GPIO12,
+        peripherals.SPI2,
+        peripherals.GPIO13,
+        peripherals.GPIO15,
+        peripherals.GPIO5,
+    );
+    display.clear(Rgb565::BLACK).unwrap();
 
     let buttons = Buttons::new(
         EVENTS.publisher().unwrap(),
@@ -406,45 +358,9 @@ async fn main(spawner: Spawner) -> ! {
 
     #[cfg(feature = "camera")]
     {
-        use embedded_graphics::image::{Image, ImageRawBE};
-        use embedded_graphics::prelude::Point;
-        use stick::camera::{Camera, FrameSize};
-
-        let mut camera = Camera::new(peripherals.UART1, peripherals.GPIO33, peripherals.GPIO32);
-
-        let _backlight = Output::new(peripherals.GPIO27, Level::High, output_config);
-
-        if camera.set_framesize(FrameSize::Qqvga).await.is_ok() {
-            log::info!("Set framesize to QQVGA (160x120)");
-        }
-
-        embassy_time::Timer::after_millis(100).await;
-
-        if camera.detect().await {
-            log::info!("Camera streaming...");
-
-            let mut frames = 0u32;
-            let start = embassy_time::Instant::now();
-            loop {
-                match camera.read_image().await {
-                    Ok(img) => {
-                        let raw_data = img.to_rgb565_raw();
-                        let raw_image: ImageRawBE<Rgb565> =
-                            ImageRawBE::new(&raw_data, img.width as u32);
-                        let image = Image::new(&raw_image, Point::zero());
-                        image.draw(&mut display).ok();
-
-                        frames += 1;
-                        if frames % 10 == 0 {
-                            let elapsed = start.elapsed().as_millis();
-                            let fps = frames as u64 * 1000 / elapsed;
-                            log::info!("{} frames, {} fps", frames, fps);
-                        }
-                    }
-                    Err(_) => {}
-                }
-            }
-        }
+        spawner
+            .spawn(stick::camera::frame_assembler(EVENTS.publisher().unwrap()))
+            .unwrap();
     }
 
     #[cfg(feature = "ir")]
@@ -466,23 +382,22 @@ async fn main(spawner: Spawner) -> ! {
             .unwrap();
     }
 
-    // let _backlight = Output::new(peripherals.GPIO27, Level::High, output_config);
+    let backend = EmbeddedBackend::new(
+        &mut display,
+        EmbeddedBackendConfig {
+            #[cfg(feature = "camera")]
+            pre_flush_callback: alloc::boxed::Box::new(move |buf| {
+                stick::camera::draw_decoded(buf);
+            }),
+            ..Default::default()
+        },
+    );
 
-    // let backend = EmbeddedBackend::new(
-    //     &mut display,
-    //     EmbeddedBackendConfig {
-    //         flush_callback: Box::new(move |display| {
-    //             _ = primitives::Circle::new(embedded_graphics::prelude::Point::new(10, 20), 30)
-    //                 .into_styled(primitives::PrimitiveStyle::with_stroke(Rgb565::WHITE, 1))
-    //                 .draw(display);
-    //         }),
-    //         ..Default::default()
-    //     },
-    // );
+    let mut terminal = Terminal::new(backend).unwrap();
 
-    // let mut terminal = Terminal::new(backend).unwrap();
+    let _backlight = Output::new(peripherals.GPIO27, Level::High, output_config);
 
-    // app.run(&mut terminal).await.unwrap();
+    app.run(&mut terminal).await.unwrap();
 
     loop {}
 }
