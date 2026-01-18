@@ -1505,6 +1505,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mousefood"
+version = "0.2.1"
+source = "git+https://github.com/borolgs/mousefood.git#43ce0e9dca38d8913472c29043774eeea9b9813f"
+dependencies = [
+ "embedded-graphics",
+ "embedded-graphics-unicodefonts",
+ "ratatui-core",
+ "thiserror",
+]
+
+[[package]]
 name = "moxcms"
 version = "0.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1758,9 +1769,9 @@ dependencies = [
 
 [[package]]
 name = "ratatui-core"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b9832b952afc8f37675331e7718e6a57624a26a5d0fdc20340ddefde66a8dcf"
+checksum = "5ef8dea09a92caaf73bff7adb70b76162e5937524058a7e5bff37869cbbec293"
 dependencies = [
  "bitflags 2.10.0",
  "compact_str",
@@ -2035,7 +2046,7 @@ dependencies = [
  "embedded-graphics-simulator",
  "env_logger",
  "log",
- "mousefood",
+ "mousefood 0.2.1 (git+https://github.com/j-g00da/mousefood?rev=c8d5e4a5af50bdab623f13656494c17e92dbf688)",
  "ratatui",
 ]
 
@@ -2129,7 +2140,7 @@ dependencies = [
  "esp-rtos",
  "log",
  "mipidsi",
- "mousefood",
+ "mousefood 0.2.1 (git+https://github.com/borolgs/mousefood.git)",
  "nb 1.1.0",
  "postcard",
  "ratatui",

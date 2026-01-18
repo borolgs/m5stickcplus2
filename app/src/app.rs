@@ -1,30 +1,27 @@
+#[allow(unused)]
 #[cfg(not(feature = "std"))]
 use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+#[allow(unused)]
+#[cfg(feature = "std")]
+use std::{string::String, vec::Vec};
 
 use embassy_time::Instant;
-use log::Level;
 use ratatui::{
     Frame, Terminal,
     buffer::Buffer,
     layout::{Constraint, Layout, Margin, Rect},
     prelude::{Backend, Widget},
     style::{Color, Style, Stylize},
-    text::Line,
-    widgets::{Block, Padding, Paragraph, Tabs, Wrap},
+    widgets::{Block, Padding, Paragraph, Tabs},
 };
-#[cfg(feature = "std")]
-use std::{string::String, vec::Vec};
-
-use strum::IntoEnumIterator;
 
 use crate::{
-    Stats, StickHat,
+    AppTab, Stats, StickHat,
     events::{self, EVENTS, Event, Receiver, Sender},
     layout::AppLayout,
-    logger,
 };
 
 #[cfg(feature = "tv")]
@@ -38,11 +35,13 @@ pub struct App {
     layout: AppLayout,
     c_start: Option<Instant>,
     b_start: Option<Instant>,
-    selected_tab: SelectedTab,
+    selected_tab: AppTab,
     tab_touched: bool,
     stats: events::Stats,
     #[cfg(feature = "tv")]
     tv: TVState,
+    #[cfg(feature = "controller")]
+    controller: crate::controller::ControllerState,
     hat: Option<StickHat>,
 }
 
@@ -57,12 +56,14 @@ impl App {
             layout: AppLayout::new(Rect::default()),
             c_start: None,
             b_start: None,
-            selected_tab: SelectedTab::Info,
+            selected_tab: AppTab::Info,
             tab_touched: false,
             #[cfg(feature = "tv")]
             tv: TVState {
                 current_btn: events::Remote::OnOff,
             },
+            #[cfg(feature = "controller")]
+            controller: crate::controller::ControllerState { camera: None },
             stats: Stats::default(),
             hat: None,
         }
@@ -90,6 +91,8 @@ impl App {
         }
         self.selected_tab = self.selected_tab.next();
         self.tab_touched = false;
+        self.sender
+            .publish_immediate(Event::TabSelected(self.selected_tab));
     }
 
     #[allow(unused)]
@@ -136,20 +139,21 @@ impl App {
 
         match self.selected_tab {
             #[cfg(feature = "controller")]
-            SelectedTab::Controller => self.draw_controller(main, buf),
+            AppTab::Controller => self.draw_controller(main, buf),
             #[cfg(feature = "vehicle")]
-            SelectedTab::Vehicle => self.draw_vehicle(main, buf),
+            AppTab::Vehicle => self.draw_vehicle(main, buf),
             #[cfg(feature = "tv")]
-            SelectedTab::Remote => self.draw_remote(main, buf),
-            SelectedTab::Info => self.draw_info(main, buf),
-            SelectedTab::Dev => self.draw_dev(main, buf),
+            AppTab::Remote => self.draw_remote(main, buf),
+            AppTab::Info => self.draw_info(main, buf),
+            #[cfg(feature = "debug")]
+            AppTab::Dev => self.draw_dev(main, buf),
         }
 
         self.draw_footer(footer, buf);
     }
 
     fn draw_tabs(&self, area: Rect, buf: &mut Buffer) {
-        let titles = SelectedTab::titles();
+        let titles = AppTab::titles();
         let selected_tab_index = self.selected_tab as usize;
 
         let bg_color = Color::Rgb(
@@ -185,9 +189,8 @@ impl App {
     #[cfg(feature = "controller")]
     fn draw_controller(&self, area: Rect, buf: &mut Buffer) {
         // TODO
-        Paragraph::new("Vehicle Controller")
-            .centered()
-            .block(Block::new().padding(Padding::top(1)))
+        Paragraph::new("VC")
+            .block(Block::new().padding(Padding::new(27, 0, 1, 0)))
             .render(area, buf);
     }
 
@@ -200,8 +203,11 @@ impl App {
             .render(area, buf);
     }
 
+    #[cfg(feature = "debug")]
     fn draw_dev(&self, area: Rect, buf: &mut Buffer) {
-        let log_lines = logger::latest_log_lines(area.height as usize);
+        use log::Level;
+
+        let log_lines = crate::logger::latest_log_lines(area.height as usize);
         let log_lines = log_lines
             .iter()
             .rev()
@@ -214,12 +220,12 @@ impl App {
                     Level::Trace => Color::Magenta,
                 };
 
-                Line::styled(msg, Style::new().fg(color))
+                ratatui::text::Line::styled(msg, Style::new().fg(color))
             })
             .collect::<Vec<_>>();
 
         Paragraph::new(log_lines)
-            .wrap(Wrap { trim: true })
+            .wrap(ratatui::widgets::Wrap { trim: true })
             .render(area, buf);
     }
 
@@ -271,7 +277,7 @@ impl App {
 
         match self.selected_tab {
             #[cfg(feature = "tv")]
-            SelectedTab::Remote if !matches!(self.hat, Some(events::StickHat::MiniJoyC)) => {
+            AppTab::Remote if !matches!(self.hat, Some(events::StickHat::MiniJoyC)) => {
                 let c_mode = {
                     let mut mode = "c - next tab";
 
@@ -324,7 +330,7 @@ impl App {
                 self.touch_tab();
                 match self.selected_tab {
                     #[cfg(feature = "controller")]
-                    SelectedTab::Controller => match joyc_event {
+                    AppTab::Controller => match joyc_event {
                         crate::JoyC::Pos((x, y)) => {
                             use crate::Controller;
 
@@ -341,7 +347,7 @@ impl App {
                         _ => {}
                     },
                     #[cfg(feature = "tv")]
-                    SelectedTab::Remote => match joyc_event {
+                    AppTab::Remote => match joyc_event {
                         crate::JoyC::Button => {
                             self.sender
                                 .publish(Event::Remote(self.tv.current_btn))
@@ -369,7 +375,7 @@ impl App {
             }
             Event::ButtonUp(events::Button::A) => match self.selected_tab {
                 #[cfg(feature = "tv")]
-                SelectedTab::Remote => {
+                AppTab::Remote => {
                     self.touch_tab();
                     self.sender
                         .publish(Event::Remote(self.tv.current_btn))
@@ -385,7 +391,7 @@ impl App {
             Event::ButtonUp(events::Button::B) => {
                 match self.selected_tab {
                     #[cfg(feature = "tv")]
-                    SelectedTab::Remote => {
+                    AppTab::Remote => {
                         self.touch_tab();
                         if self.b_held_time() > 300 {
                             self.tv.next_row();
@@ -411,7 +417,7 @@ impl App {
                     } else {
                         match self.selected_tab {
                             #[cfg(feature = "tv")]
-                            SelectedTab::Remote => {
+                            AppTab::Remote => {
                                 self.tv.prev_btn();
                             }
                             _ => {}
@@ -425,42 +431,33 @@ impl App {
             Event::StatsUpdated(stats) => {
                 self.stats = stats;
             }
+            #[cfg(feature = "controller")]
+            Event::Camera(crate::Camera::CameraReady { address }) => {
+                self.controller.camera = Some(address);
+            }
+            Event::TabSelected(tab) => match tab {
+                #[cfg(feature = "controller")]
+                AppTab::Controller => {
+                    if let Some(address) = self.controller.camera {
+                        self.sender
+                            .publish(Event::Camera(crate::Camera::ConnectToCamera { address }))
+                            .await
+                    }
+                }
+                _ =>
+                {
+                    #[cfg(feature = "controller")]
+                    if let Some(address) = self.controller.camera {
+                        self.sender
+                            .publish(Event::Camera(crate::Camera::DisconnectFromCamera {
+                                address,
+                            }))
+                            .await
+                    }
+                }
+            },
             _ => {}
         }
-    }
-}
-
-#[derive(
-    Clone, Copy, PartialEq, strum::EnumIter, strum::EnumCount, strum::FromRepr, strum::Display,
-)]
-pub enum SelectedTab {
-    #[strum(to_string = "info")]
-    Info,
-    #[cfg(feature = "controller")]
-    #[strum(to_string = "ctrl")]
-    Controller,
-    #[cfg(feature = "vehicle")]
-    #[strum(to_string = "vehicle")]
-    Vehicle,
-    #[cfg(feature = "tv")]
-    #[strum(to_string = "tv")]
-    Remote,
-    #[strum(to_string = "dev")]
-    Dev,
-}
-
-impl SelectedTab {
-    pub fn next(self) -> Self {
-        Self::from_repr((self as usize + 1) % Self::iter().len()).unwrap()
-    }
-
-    pub fn prev(self) -> Self {
-        let len = Self::iter().len();
-        Self::from_repr((self as usize + len - 1) % len).unwrap()
-    }
-
-    pub fn titles() -> Vec<String> {
-        Self::iter().map(|t| t.to_string()).collect::<Vec<_>>()
     }
 }
 

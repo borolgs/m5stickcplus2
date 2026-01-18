@@ -10,5 +10,8 @@ pub mod layout;
 pub mod logger;
 pub mod remote;
 
+#[cfg(feature = "controller")]
+pub mod controller;
+
 pub use app::App;
 pub use events::*;
